@@ -1,0 +1,262 @@
+---
+title: "Swiss Public Charging Data Analysis"
+output: html_document
+date: "2024-11-04"
+---
+
+```{r setup, include=FALSE}
+library(pxR)
+library(dplyr)
+library(tidyverse)
+
+```
+
+
+```{r charging point details}
+CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/EVSE_details_2024-10-04h.csv") %>%
+  mutate(Power_kW = as.integer(sub("^(\\d+).*", "\\1", ChargingFacilities)))
+
+CH_EVSE_details_short <- CH_EVSE_details %>%
+  select(EvseID, ChargingStationId, ChargingFacilities, Power_kW, Accessibility, City, GeoCoordinates)
+
+```
+
+
+```{r october data}
+charge.points.data <- read.csv("M:/Rudolph/0-Datasets/Switzerland/Swiss-chargers.csv")
+```
+
+
+```{r function to convert charging availability tables - monthly data}
+
+EVSE_processing <- function(csv_file, merged_object = NULL, id_col = "EvseID") { #file path as a string input
+  # Read the csv file into a dataframe object
+  my.df <- read.csv(csv_file)
+  
+  # Convert the availability statuses into factors (to save storage space)
+  factor_cols <- 2:dim(my.df)[2]
+  my.df[ , factor_cols] <- lapply(my.df[ , factor_cols],factor)
+
+  # (Optional) Merge with an existing object
+  if(!is.null(merged_object)) {
+    result.df <- merge(merged_object, my.df, by = id_col, all = TRUE)
+    return(result.df) #return a merged dataframe if one is defined
+  }
+  return(my.df) #return the single processed data frame
+}
+
+```
+
+```{r function to cycle through files in a folder - monthly data}
+read_csvs <- function(main_dir = "M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data", start_f = 1, n_files = 'All') {
+  # Get list of sub-directories in the main directory
+  # subdirs <- list.dirs(main_dir, full.names = TRUE, recursive = FALSE)
+  
+  # Get list of files in the main directory
+  if(n_files == 'All')  file_list <- list.files(main_dir)
+  # to do a subset of the files
+  else {
+    end_f = start_f + n_files - 1
+    file_list <- list.files(main_dir)[start_f:end_f]
+  }
+  
+  df_statuses <- NULL #initiate NULL for the dataframe
+  
+  # Loop through each sub directory
+  for (file in file_list) {
+    start_time <- Sys.time()
+
+    # Create the full path to the CSV file
+    csv_file_path <- file.path(main_dir, file)
+    
+    if(!file.exists(csv_file_path)) next #if the file does not exist, then go to the next one.
+    
+    if(is.null(df_statuses)) { #the first time this is run, df_statuses will be NULL
+      # Read and process the csv
+      df_statuses <- EVSE_processing(csv_file_path)
+    } else {
+      # Read, process, and merge the csv with existing ones
+      df_statuses <- EVSE_processing(csv_file_path, merged_object = df_statuses)
+    }
+    end_time <- Sys.time()
+
+    execution_time <- end_time - start_time
+
+    cat("Execution time was", as.numeric(execution_time, units = "secs"), "s for this iteration.\n")
+
+  }
+  
+  return(df_statuses)
+}
+
+```
+
+```{r create joined df with all availability statuses - chunked method}
+start_time <- Sys.time()
+EVSE_partial.1a <- read_csvs(start_f = 1, n_files = 2)
+EVSE_partial.1b <- read_csvs(start_f = 3, n_files = 2)
+EVSE_partial.A <- merge(EVSE_partial.1a, EVSE_partial.1b, by = 'EvseID', all = TRUE)
+execution_time <- Sys.time() - start_time
+cat("Execution time was", as.numeric(execution_time, units = "secs"), "s for 4 files.\n")
+print(dim(EVSE_partial.A))
+```
+```{r create joined df with all availability statuses - running method}
+start_time <- Sys.time()
+EVSE_partial.B <- read_csvs(start_f = 1, n_files = 4)
+execution_time <- Sys.time() - start_time
+cat("Execution time was", as.numeric(execution_time, units = "secs"), "s for 4 files.\n")
+print(dim(EVSE_partial.B))
+```
+```{r chunked execution in parallel setup}
+file_list <- list.files("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data")
+num_files <- length(file_list)
+files_in_chunk <- 2
+iterations <- ceiling(num_files/files_in_chunk)
+
+```
+
+```{r parallel chunked execution - working}
+library(future)
+library(future.apply)
+library(parallel)
+
+cores <- detectCores() - 2 #max cores available. leave 2 cores unused
+if(cores < iterations) iterations <- cores
+
+plan(multisession, workers = iterations)
+
+file_pairs <- list()
+
+```
+
+```{r Utilization rate}
+
+Util_rate <- function(df_input) { #takes the df object from function "read_csvs()" as the input
+  df_util <- data.frame(timestamp = NA, year = NA, month = NA, day = NA, weekday = NA, hour = NA, minute = NA, occupied = NA, available = NA, unknown = NA, total = NA, utilization = NA)
+  for(col in colnames(df_input[-1])) {
+    num_used <- sum(df_input[ ,col] == "Occupied", na.rm = TRUE) #number of occupied CPs
+    num_available <- sum(df_input[ ,col] == "Available", na.rm = TRUE) #number of available CPs
+    num_unknown <- sum(df_input[ ,col] == "Unknown", na.rm = TRUE) #number of unknown CPs
+    tot_num <- length(df_input[ ,col])
+    
+    utilization_rate <- num_used/tot_num
+    
+    #convert column name to a datetime object
+    datetime_string <- sub("S_","",col)
+    datetime_object <- ymd_hms(gsub("\\.", ":", datetime_string), tz = "Europe/Zurich")
+    
+    #record the data in a new results dataframe
+    row_util <- data.frame(timestamp = datetime_object,
+                           year = year(datetime_object), 
+                           month = month(datetime_object),
+                           day = day(datetime_object),
+                           weekday = wday(datetime_object),
+                           hour = hour(datetime_object),
+                           minute = round(minute(datetime_object)/5)*5,
+                           occupied = num_used, 
+                           available = num_available, 
+                           unknown = num_unknown, 
+                           total = tot_num, 
+                           utilization = utilization_rate)
+    
+    #bind with the large df
+    df_util <- rbind(df_util, row_util)
+  }
+  return(df_util)
+}
+
+```
+
+```{r Utilization rate values}
+library(data.table)
+#takes some time to run
+EVSE_util_df <- Util_rate(EVSE_partial.B)
+
+EVSE_util_dt <- setDT(EVSE_util_df)
+
+```
+
+
+```{r clean data}
+EVSE_util_df_cleaned <- EVSE_util_df %>%
+  filter(unknown < 10000) #remove instances where 'unknown' CPs are too high, this is likely a data collection error
+
+```
+
+```{r plot utilization}
+plot(x = as.POSIXlt(EVSE_util_df_cleaned$timestamp), y = EVSE_util_df_cleaned$utilization, pch = 19,
+     ylab = "Utilization Rate", xlab = "Date", ylim = c(0,0.25))
+
+```
+
+```{r EVSE details}
+
+Power_demand <- function(Charger_df, Status_df) {
+  Charger_df <- Charger_df %>%
+    select(EvseID, Power_kW)
+  
+  # Add the power demand column to the status data frame
+  Power_status_df <- merge(Charger_df, Status_df, by = "EvseID", all = TRUE)
+  
+  # convert "occupied" into the power level for all the status columns
+ for(col in 3:dim(Power_status_df)[2]) {
+   Power_status_df[ , col] <- Power_status_df[ , "Power_kW"] * as.numeric(Power_status_df[ , col] == "Occupied")
+ }
+  return(Power_status_df) 
+}
+
+```
+
+```{r convert statuses into power level demands}
+Power_status_df <- Power_demand(CH_EVSE_details_short, EVSE_df)
+```
+```{r clean power status}
+Power_status_df_cleaned <- Power_status_df %>%
+  filter(!is.na(Power_kW))
+```
+
+
+```{r power level}
+Power_level <- function(df_input, filters = NULL) { #takes the df object from function "Power_demand()" as the input
+  df_power <- data.frame(timestamp = NA, year = NA, month = NA, day = NA, weekday = NA, hour = NA, minute = NA, power = NA)
+  for(col in colnames(df_input[-c(1:2)])) {
+    power_dem <- sum(df_input[ , col], na.rm = TRUE) #gets the total power level
+    
+    #convert column name to a datetime object
+    datetime_string <- sub("S_","",col)
+    datetime_object <- ymd_hms(gsub("\\.", ":", datetime_string), tz = "Europe/Zurich")
+    
+    #record the data in a new results dataframe
+    row_pwr <- data.frame(timestamp = datetime_object,
+                           year = year(datetime_object), 
+                           month = month(datetime_object),
+                           day = day(datetime_object),
+                           weekday = wday(datetime_object),
+                           hour = hour(datetime_object),
+                           minute = round(minute(datetime_object)/5)*5,
+                           power = power_dem)
+    
+    #bind with the large df
+    df_power <- rbind(df_power, row_pwr)
+  }
+  return(df_power)
+}
+
+```
+
+```{r power level data}
+#takes time to run
+Power_results <- Power_level(Power_status_df_cleaned)
+```
+```{r power level data cleaned}
+Power_results_cleaned <- Power_results %>%
+  filter(power > 0)
+
+```
+
+
+```{r plot power}
+plot(x = as.POSIXlt(Power_results_cleaned$timestamp), y = Power_results_cleaned$power/1000, pch = 19,
+     ylab = "Power Demand [MW]", xlab = "Date", ylim = c(0,20))
+```
+
