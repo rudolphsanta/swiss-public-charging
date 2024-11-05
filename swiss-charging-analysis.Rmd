@@ -91,6 +91,50 @@ read_csvs <- function(main_dir = "M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2
 
 ```
 
+```{r read and subset csvs}
+
+read_and_filter_csvs <- function(main_dir = "M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data", 
+                                 weekday = 1, 
+                                 n_files = 'All') {
+  # Get list of files in the main directory
+  if(n_files == 'All')  file_list <- list.files(main_dir)
+  # to do a subset of the files
+  else {
+    end_f = start_f + n_files - 1
+    file_list <- list.files(main_dir)[start_f:end_f]
+  }
+  
+  df_statuses <- NULL #initiate NULL for the dataframe
+  
+  # Loop through each sub directory
+  for (file in file_list) {
+    start_time <- Sys.time()
+
+    # Create the full path to the CSV file
+    csv_file_path <- file.path(main_dir, file)
+    
+    if(!file.exists(csv_file_path)) next #if the file does not exist, then go to the next one.
+    
+    if(is.null(df_statuses)) { #the first time this is run, df_statuses will be NULL
+      # Read and process the csv
+      df_statuses <- EVSE_processing(csv_file_path)
+    } else {
+      # Read, process, and merge the csv with existing ones
+      df_statuses <- EVSE_processing(csv_file_path, merged_object = df_statuses)
+    }
+    end_time <- Sys.time()
+
+    execution_time <- end_time - start_time
+
+    cat("Execution time was", as.numeric(execution_time, units = "secs"), "s for this iteration.\n")
+
+  }
+  
+  return(df_statuses)
+}
+```
+
+
 ```{r create joined df with all availability statuses - chunked method}
 start_time <- Sys.time()
 EVSE_partial.1a <- read_csvs(start_f = 1, n_files = 2)
@@ -104,9 +148,73 @@ print(dim(EVSE_partial.A))
 start_time <- Sys.time()
 EVSE_partial.B <- read_csvs(start_f = 1, n_files = 4)
 execution_time <- Sys.time() - start_time
-cat("Execution time was", as.numeric(execution_time, units = "secs"), "s for 4 files.\n")
+cat("Execution time was", as.numeric(execution_time, units = "mins"), "min for 4 files.\n")
 print(dim(EVSE_partial.B))
 ```
+```{r create one wide data frame for the whole dataset - chunked method step 1}
+file_list <- list.files("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data")
+num_files <- length(file_list)
+files_in_partial <- 2
+partials_in_chunk <- 2
+files_in_chunk <- files_in_partial * files_in_chunk
+
+iterations <- ceiling(num_files/(files_in_chunk))
+
+for(i in 2:iterations) {
+  # long execution
+  start_time <- Sys.time()
+  
+  partial_a_start <- (files_in_chunk*(i-1)) + i
+  partial_b_start <- partial_a_start + files_in_partial
+  
+  EVSE_partial.a <- read_csvs(start_f = partial_a_start, n_files = files_in_partial)
+  EVSE_partial.b <- read_csvs(start_f = partial_b_start, n_files = files_in_partial)
+  
+  
+  EVSE_partial.result <- merge(EVSE_partial.a, EVSE_partial.b, by = 'EvseID', all = TRUE)
+  obj_name <- paste("EVSE_partial", ".", i, sep = "")
+  execution_time <- Sys.time() - start_time
+  cat("Execution time was", as.numeric(execution_time, units = "mins"), "s for 4 files.\n")
+  assign(obj_name,EVSE_partial.result) 
+  
+  #save the object
+  filepath <- file.path("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data", paste0(obj_name, ".csv"))
+  write.csv(EVSE_partial.result, filepath)
+  
+  rm(EVSE_partial.a,EVSE_partial.b,EVSE_partial.result)
+  gc()
+}
+```
+
+
+```{r create one wide data frame for the whole dataset - chunked method step 2}
+EVSE_partial_1_2 <- merge(EVSE_partial.1, EVSE_partial.2, by = 'EvseID', all = TRUE)
+rm(EVSE_partial.1, EVSE_partial.2)
+gc()
+
+EVSE_partial_3_4 <- merge(EVSE_partial.3, EVSE_partial.4, by = 'EvseID', all = TRUE)
+rm(EVSE_partial.3, EVSE_partial.4)
+gc()
+
+EVSE_partial_5_6 <- merge(EVSE_partial.5, EVSE_partial.6, by = 'EvseID', all = TRUE)
+rm(EVSE_partial.5, EVSE_partial.6)
+gc()
+
+
+EVSE_df <- merge(EVSE_partial_1_2, EVSE_partial_3_4, by = 'EvseID', all = TRUE)
+rm(EVSE_partial_1_2, EVSE_partial_3_4)
+gc()
+
+EVSE_df <- merge(EVSE_df, EVSE_partial_5_6, by = 'EvseID', all = TRUE)
+rm(EVSE_partial_5_6)
+gc()
+
+write.csv(EVSE_df, "M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data/EVSE_FULL.csv")
+
+
+
+```
+
 ```{r chunked execution in parallel setup}
 file_list <- list.files("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data")
 num_files <- length(file_list)
@@ -129,17 +237,50 @@ file_pairs <- list()
 
 ```
 
+
+#### Adding columns to processed charging dataset
+```{r merge power level of each charger}
+
+EVSE_df <- merge(EVSE_partial.1, CH_EVSE_details_short[ , c('EvseID','Power_kW','City')], by = 'EvseID', all.x = TRUE)
+
+EVSE_df <- EVSE_df %>%
+  relocate(City, .after = EvseID) %>%
+  relocate(Power_kW, .after = EvseID)
+```
+
+```{r cleaning - remove CPs (rows) with no availability data at all}
+
+EVSE_df 
+
+```
+
+
+```{r segment by power level}
+# summary(EVSE_df$Power_kW)
+EVSE_lowP <- EVSE_df %>%
+  filter(Power_kW <= 22)
+
+EVSE_medP <- EVSE_df %>%
+  filter(Power_kW <= 100 & Power_kW > 22)
+
+EVSE_highP <- EVSE_df %>% 
+  filter(Power_kW > 100)
+```
+
 ```{r Utilization rate}
 
 Util_rate <- function(df_input) { #takes the df object from function "read_csvs()" as the input
-  df_util <- data.frame(timestamp = NA, year = NA, month = NA, day = NA, weekday = NA, hour = NA, minute = NA, occupied = NA, available = NA, unknown = NA, total = NA, utilization = NA)
-  for(col in colnames(df_input[-1])) {
+  df_util <- data.frame(timestamp = NA, year = NA, month = NA, day = NA, weekday = NA, hour = NA, minute = NA, occupied = NA, available = NA, unknown = NA, service = NA, NA_ = NA, total = NA, utilization = NA)
+  for(col in colnames(df_input)) {
+    if (!grepl("^S_", col)) next
     num_used <- sum(df_input[ ,col] == "Occupied", na.rm = TRUE) #number of occupied CPs
     num_available <- sum(df_input[ ,col] == "Available", na.rm = TRUE) #number of available CPs
     num_unknown <- sum(df_input[ ,col] == "Unknown", na.rm = TRUE) #number of unknown CPs
+    num_service <- sum(df_input[ ,col] == "OutOfService", na.rm = TRUE) #number of out of service CPs
+    num_NA <- sum(is.na(df_input[ ,col]), na.rm = TRUE) 
     tot_num <- length(df_input[ ,col])
     
-    utilization_rate <- num_used/tot_num
+    utilization_rate <- num_used/(num_used + num_available)
     
     #convert column name to a datetime object
     datetime_string <- sub("S_","",col)
@@ -156,6 +297,8 @@ Util_rate <- function(df_input) { #takes the df object from function "read_csvs(
                            occupied = num_used, 
                            available = num_available, 
                            unknown = num_unknown, 
+                           service = num_service,
+                           NA_ = num_NA,
                            total = tot_num, 
                            utilization = utilization_rate)
     
@@ -167,25 +310,110 @@ Util_rate <- function(df_input) { #takes the df object from function "read_csvs(
 
 ```
 
-```{r Utilization rate values}
-library(data.table)
+```{r Utilization rate values - by power level}
 #takes some time to run
-EVSE_util_df <- Util_rate(EVSE_partial.B)
 
-EVSE_util_dt <- setDT(EVSE_util_df)
+EVSE_util_lowP <- Util_rate(EVSE_lowP)
+
+EVSE_util_medP <- Util_rate(EVSE_medP)
+
+EVSE_util_highP <- Util_rate(EVSE_highP)
+
+EVSE_util_ovr <- Util_rate(EVSE_df)
 
 ```
 
 
+```{r function to get certain parameters}
+Subset_EVSE <- function(df_input, year.f = NULL, month.f = NULL, day.f = NULL, weekday.f = NULL, hour.f = NULL) {
+  df_result <- df_input
+  
+  if(!is.null(year.f)) {df_result <- filter(df_result, year == year.f)}
+  if(!is.null(month.f)) {df_result <- filter(df_result, month == month.f)}
+  if(!is.null(day.f)) {df_result <- filter(df_result, day == day.f)}
+  if(!is.null(weekday.f)) {df_result <- filter(df_result, weekday == weekday.f)}
+  if(!is.null(hour.f)) {df_result <- filter(df_result, hour == hour.f)}
+  
+  return(df_result)
+}
+
+Get_CI <- function(df_input, col_name = "utilization", z_score = 1.96, clean.na = TRUE) {
+  observations <- df_input[col_name]
+  
+  if(clean.na == TRUE)  observations <- observations[!is.na(observations)]
+  
+  sample_mean <- mean(observations)
+  sample_sd <- sd(observations)
+  sample_size <- length(observations)
+  
+  sample_median <- median(observations)
+  
+  std_err <- sample_sd/ sqrt(sample_size)
+  
+  lower_bound <- sample_mean - z_score * std_err
+  upper_bound <- sample_mean + z_score * std_err
+  
+  
+  return(list("lower_bound" = lower_bound,
+              "median" = sample_median,
+              "upper_bound" = upper_bound))
+}
+```
+
+```{r sandbox}
+filter(EVSE_util_wkday, !is.na("utilization"))
+
+undebug(Get_CI)
+Weekday.CI <- Get_CI(EVSE_util_wkday)
+```
+
+
+```{r weedays}
+EVSE_util_wkday <- EVSE_util_ovr %>%
+  filter(weekday <= 5)
+
+
+#get the confidence interval for each hour
+for(h in 0:23) {
+  this.df <- Subset_EVSE(EVSE_util_wkday, hour.f = h)
+  
+  this.CI <- Get_CI(this.df)
+  
+  result.df <- data.frame(hour = h, 
+                          lower_bound = this.CI$lower_bound,
+                          median = this.CI$median,
+                          upper_bound = this.CI$upper_bound)
+  
+  if(h == 0) {
+    result <- result.df
+  } else {
+    result <- rbind(result, result.df)
+    }
+}
+
+#visualization
+plot(result$hour, result$median*100, type = 'l', col = 'black', 
+     xlab = "hour", ylab = "utilization [%]", ylim = c(0,20))
+lines(result$hour, result$lower_bound*100, type = 'l', col = 'red')
+lines(result$hour, result$upper_bound*100, type = 'l', col = 'red')
+
+```
+
 ```{r clean data}
 EVSE_util_df_cleaned <- EVSE_util_df %>%
-  filter(unknown < 10000) #remove instances where 'unknown' CPs are too high, this is likely a data collection error
+  filter(unknown < dim(EVSE_util_df)[1] * 0.1) %>% #remove instances where 'unknown' CPs are too high, this is likely a data collection error
+  merge(Charger_df, Status_df, by = "EvseID", all = TRUE)
 
 ```
 
 ```{r plot utilization}
 plot(x = as.POSIXlt(EVSE_util_df_cleaned$timestamp), y = EVSE_util_df_cleaned$utilization, pch = 19,
      ylab = "Utilization Rate", xlab = "Date", ylim = c(0,0.25))
+
+```
+```{r filter for observations}
+
+status_filter <- function(data, )
 
 ```
 
@@ -208,8 +436,10 @@ Power_demand <- function(Charger_df, Status_df) {
 ```
 
 ```{r convert statuses into power level demands}
-Power_status_df <- Power_demand(CH_EVSE_details_short, EVSE_df)
+EVSE_df <- Power_demand(CH_EVSE_details_short, EVSE_partial.B)
 ```
+
+
 ```{r clean power status}
 Power_status_df_cleaned <- Power_status_df %>%
   filter(!is.na(Power_kW))
