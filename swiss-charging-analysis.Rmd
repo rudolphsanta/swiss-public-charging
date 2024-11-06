@@ -156,10 +156,10 @@ file_list <- list.files("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charg
 num_files <- length(file_list)
 files_in_partial <- 2
 partials_in_chunk <- 2
-files_in_chunk <- files_in_partial * files_in_chunk
+files_in_chunk <- files_in_partial * partials_in_chunk
 
 iterations <- ceiling(num_files/(files_in_chunk))
-
+i <- 5
 for(i in 2:iterations) {
   # long execution
   start_time <- Sys.time()
@@ -172,7 +172,7 @@ for(i in 2:iterations) {
   EVSE_partial.b <- read_csvs(start_f = partial_b_start, n_files = files_in_partial)
   
   
-  EVSE_partial.result <- merge(EVSE_partial.a, EVSE_partial.b, by = 'EvseID', all = TRUE)
+  EVSE_partial.result <- merge(EVSE_partial.a, EVSE_partial.b, by.x = 'EvseID', all = TRUE)
   obj_name <- paste("EVSE_partial", ".", i, sep = "")
   execution_time <- Sys.time() - start_time
   cat("Execution time was", as.numeric(execution_time, units = "mins"), "s for 4 files.\n")
@@ -216,6 +216,8 @@ write.csv(EVSE_df, "M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-d
 
 ```
 
+
+# Parallel Setup
 ```{r chunked execution in parallel setup}
 file_list <- list.files("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data")
 num_files <- length(file_list)
@@ -324,6 +326,13 @@ EVSE_util_ovr <- Util_rate(EVSE_df)
 
 ```
 
+```{r}
+summary(EVSE_util_ovr)
+
+plot(x = EVSE_util_ovr$hour, y = EVSE_util_ovr$utilization*100, 
+     ylim = c(0,20), ylab = "Utilization [%]", xlab = "Hour", 
+     col = 'black', pch = 19, cex = 0.8)
+```
 
 ```{r function to get certain parameters}
 Subset_EVSE <- function(df_input, year.f = NULL, month.f = NULL, day.f = NULL, weekday.f = NULL, hour.f = NULL) {
@@ -346,18 +355,22 @@ Get_CI <- function(df_input, col_name = "utilization", z_score = 1.96, clean.na 
   sample_mean <- mean(observations)
   sample_sd <- sd(observations)
   sample_size <- length(observations)
+  sample_min <- min(observations)
+  sample_max <- max(observations)
   
   sample_median <- median(observations)
   
   std_err <- sample_sd/ sqrt(sample_size)
   
-  lower_bound <- sample_mean - z_score * std_err
-  upper_bound <- sample_mean + z_score * std_err
+  lower_bound <- sample_mean - (z_score * std_err)
+  upper_bound <- sample_mean + (z_score * std_err)
   
   
   return(list("lower_bound" = lower_bound,
-              "median" = sample_median,
-              "upper_bound" = upper_bound))
+              "mean" = sample_mean,
+              "upper_bound" = upper_bound,
+              "min" = sample_min,
+              "max" = sample_max))
 }
 ```
 
@@ -373,7 +386,7 @@ Weekday.CI <- Get_CI(EVSE_util_wkday)
 EVSE_util_wkday <- EVSE_util_ovr %>%
   filter(weekday <= 5)
 
-
+h = 0
 #get the confidence interval for each hour
 for(h in 0:23) {
   this.df <- Subset_EVSE(EVSE_util_wkday, hour.f = h)
@@ -382,8 +395,10 @@ for(h in 0:23) {
   
   result.df <- data.frame(hour = h, 
                           lower_bound = this.CI$lower_bound,
-                          median = this.CI$median,
-                          upper_bound = this.CI$upper_bound)
+                          mean = this.CI$mean,
+                          upper_bound = this.CI$upper_bound,
+                          min = this.CI$min,
+                          max = this.CI$max)
   
   if(h == 0) {
     result <- result.df
@@ -392,12 +407,24 @@ for(h in 0:23) {
     }
 }
 
-#visualization
-plot(result$hour, result$median*100, type = 'l', col = 'black', 
-     xlab = "hour", ylab = "utilization [%]", ylim = c(0,20))
-lines(result$hour, result$lower_bound*100, type = 'l', col = 'red')
-lines(result$hour, result$upper_bound*100, type = 'l', col = 'red')
+#visualizations
+result
 
+plot(x = EVSE_util_wkday$hour, y = EVSE_util_wkday$utilization*100, 
+     ylim = c(0,20), ylab = "Utilization [%]", xlab = "Hour", 
+     col = 'black', pch = 19, cex = 0.8)
+
+plot(result$hour, result$mean*100, type = 'l', col = 'black', 
+     xlab = "hour", ylab = "utilization [%]", ylim = c(0,20),
+     main = "Weekdays")
+lines(result$hour, result$lower_bound*100, type = 'l', col = 'blue')
+lines(result$hour, result$upper_bound*100, type = 'l', col = 'blue')
+lines(result$hour, result$min*100, type = 'l', col = 'red')
+lines(result$hour, result$max*100, type = 'l', col = 'red')
+
+```
+```{r}
+hist(filter(result, hour = 10))
 ```
 
 ```{r clean data}

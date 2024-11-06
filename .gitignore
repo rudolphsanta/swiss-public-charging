@@ -1,4 +1,6 @@
 .Rproj.user
 .Rhistory
-.RData
+*.RData
 .Ruserdata
+
+20241105 Workspace.Rdata
