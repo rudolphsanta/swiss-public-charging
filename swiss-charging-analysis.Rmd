@@ -145,6 +145,7 @@ cat("Execution time was", as.numeric(execution_time, units = "secs"), "s for 4 f
 print(dim(EVSE_partial.A))
 ```
 ```{r create joined df with all availability statuses - running method}
+#This method takes longer
 start_time <- Sys.time()
 EVSE_partial.B <- read_csvs(start_f = 1, n_files = 4)
 execution_time <- Sys.time() - start_time
@@ -160,7 +161,7 @@ files_in_chunk <- files_in_partial * partials_in_chunk
 
 iterations <- ceiling(num_files/(files_in_chunk))
 i <- 5
-for(i in 2:iterations) {
+for(i in c(6)) {
   # long execution
   start_time <- Sys.time()
   
@@ -175,7 +176,7 @@ for(i in 2:iterations) {
   EVSE_partial.result <- merge(EVSE_partial.a, EVSE_partial.b, by.x = 'EvseID', all = TRUE)
   obj_name <- paste("EVSE_partial", ".", i, sep = "")
   execution_time <- Sys.time() - start_time
-  cat("Execution time was", as.numeric(execution_time, units = "mins"), "s for 4 files.\n")
+  cat("Execution time was", as.numeric(execution_time, units = "mins"), "m for 4 files.\n")
   assign(obj_name,EVSE_partial.result) 
   
   #save the object
@@ -321,9 +322,9 @@ Util_rate <- function(df_input) { #takes the df object from function "read_csvs(
 
 EVSE_util_lowP <- Util_rate(EVSE_lowP)
 
-EVSE_util_medP <- Util_rate(EVSE_medP)
+# EVSE_util_medP <- Util_rate(EVSE_medP)
 
-EVSE_util_highP <- Util_rate(EVSE_highP)
+# EVSE_util_highP <- Util_rate(EVSE_highP)
 
 EVSE_util_ovr <- Util_rate(EVSE_df)
 
@@ -336,6 +337,16 @@ summary(EVSE_util_ovr)
 plot(x = EVSE_util_ovr$hour, y = EVSE_util_ovr$utilization*100, 
      ylim = c(0,20), ylab = "Utilization [%]", xlab = "Hour", 
      col = 'black', pch = 19, cex = 0.8)
+
+hist(filter(EVSE_util_ovr, hour == 5)$utilization)
+
+summary(EVSE_util_lowP)
+
+plot(x = EVSE_util_lowP$hour, y = EVSE_util_lowP$utilization*100, 
+     ylim = c(0,20), ylab = "Utilization [%]", xlab = "Hour", 
+     col = 'black', pch = 19, cex = 0.8)
+
+hist(filter(EVSE_util_lowP, hour == 5)$utilization)
 ```
 
 ```{r function to get certain parameters}
@@ -387,10 +398,10 @@ Weekday.CI <- Get_CI(EVSE_util_wkday)
 
 
 ```{r weedays}
-EVSE_util_wkday <- EVSE_util_ovr %>%
+EVSE_util_wkday <- EVSE_util_lowP %>%
   filter(weekday <= 5)
 
-h = 0
+
 #get the confidence interval for each hour
 for(h in 0:23) {
   this.df <- Subset_EVSE(EVSE_util_wkday, hour.f = h)
