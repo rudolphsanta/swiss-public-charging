@@ -153,31 +153,40 @@ cat("Execution time was", as.numeric(execution_time, units = "mins"), "min for 4
 print(dim(EVSE_partial.B))
 ```
 ```{r create one wide data frame for the whole dataset - chunked method step 1}
-file_list <- list.files("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data")
-num_files <- length(file_list)
+file_list <- list.files("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data", pattern = "charging\\.csv$")
+num_files <- 22 #length(file_list)
 files_in_partial <- 2
 partials_in_chunk <- 2
 files_in_chunk <- files_in_partial * partials_in_chunk
 
 iterations <- ceiling(num_files/(files_in_chunk))
-i <- 5
-for(i in c(6)) {
+
+for(i in seq(1,iterations)) {
   # long execution
   start_time <- Sys.time()
   
-  partial_a_start <- (files_in_chunk*(i-1)) + i
-  partial_b_start <- partial_a_start + files_in_partial
-  
-  
-  EVSE_partial.a <- read_csvs(start_f = partial_a_start, n_files = files_in_partial)
-  EVSE_partial.b <- read_csvs(start_f = partial_b_start, n_files = files_in_partial)
-  
-  
-  EVSE_partial.result <- merge(EVSE_partial.a, EVSE_partial.b, by.x = 'EvseID', all = TRUE)
-  obj_name <- paste("EVSE_partial", ".", i, sep = "")
-  execution_time <- Sys.time() - start_time
-  cat("Execution time was", as.numeric(execution_time, units = "mins"), "m for 4 files.\n")
-  assign(obj_name,EVSE_partial.result) 
+  if (i == iterations & num_files %% files_in_chunk == 0) { #Check if the last iteration has less than files_in_chunk
+    num_files_final <- num_files %% files_in_chunk #should be a number less than files_in_chunk, but not zero.
+    #execute as a single chunk
+    partial_start <- (files_in_chunk*(i-1)) + 1
+    EVSE_partial.result <- read_csvs(start_f = partial_start, n_files = num_files_final)
+    obj_name <- paste("EVSE_partial", ".", i, sep = "")
+    execution_time <- Sys.time() - start_time
+    cat("Execution time was", as.numeric(execution_time, units = "mins"), "m for",num_files_final,"files.\n")
+    assign(obj_name,EVSE_partial.result) 
+  } else {
+    partial_a_start <- (files_in_chunk*(i-1)) + 1
+    partial_b_start <- partial_a_start + files_in_partial
+    
+    EVSE_partial.a <- read_csvs(start_f = partial_a_start, n_files = files_in_partial)
+    EVSE_partial.b <- read_csvs(start_f = partial_b_start, n_files = files_in_partial)
+    
+    EVSE_partial.result <- merge(EVSE_partial.a, EVSE_partial.b, by.x = 'EvseID', all = TRUE)
+    obj_name <- paste("EVSE_partial", ".", i, sep = "")
+    execution_time <- Sys.time() - start_time
+    cat("Execution time was", as.numeric(execution_time, units = "mins"), "m for 4 files.\n")
+    assign(obj_name,EVSE_partial.result) 
+  }
   
   #save the object
   filepath <- file.path("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data", paste0(obj_name, ".csv"))

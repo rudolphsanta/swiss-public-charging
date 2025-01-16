@@ -1,0 +1,52 @@
+---
+title: "Data Collection Agglomeration"
+output: html_document
+date: "2025-01-16"
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(tidyverse)
+```
+
+```{r functions}
+combine_status_files <- function(file_paths,output_file = NULL) {
+   merged_data <- read.csv(file_paths[1], stringsAsFactors = TRUE)
+  
+  # Loop through the remaining files and merge them
+  for (i in 2:length(file_paths)) {
+    if (!file.exists(file_paths[i])) stop(paste("File not found:", filepaths[i]))
+    current_data <- read.csv(file_paths[i], stringsAsFactors = TRUE)
+    merged_data <- merge(merged_data, current_data, by = "EvseID", all = TRUE)
+  }
+  
+  # Save the merged data to a CSV file
+  write.csv(merged_data, file = output_file, row.names = FALSE)
+
+  message("Merged data saved to ", output_file)
+   # return(merged_data)
+}
+
+```
+
+## Find Files
+```{r October 2024}
+oct_status_files <- list.files("C:/Users/santar_r/Documents/Rudolph_local/Python/EVSE-Status-Data", pattern = "^evse_statuses_2024-10",full.names = TRUE)
+oct_output_file <- file.path("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data/2024-10-charging.csv")
+
+combine_status_files(oct_status_files, oct_output_file)
+
+```
+
+
+```{r}
+Test2 <- read.csv("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data/2024-08-charging.csv")
+```
+
+## Including Plots
+```{r combine to fit the format of other files}
+nov_status_files <- list.files("C:/Users/santar_r/Documents/Rudolph_local/Python/EVSE-Status-Data", pattern = "^evse_statuses_2024-11")
+dec_status_files <- list.files("C:/Users/santar_r/Documents/Rudolph_local/Python/EVSE-Status-Data", pattern = "^evse_statuses_2024-12")
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
