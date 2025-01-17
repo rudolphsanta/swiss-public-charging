@@ -10,7 +10,7 @@ library(tidyverse)
 ```
 
 ```{r functions}
-combine_status_files <- function(file_paths,output_file = NULL) {
+combine_status_files <- function(file_paths,output_file) {
    merged_data <- read.csv(file_paths[1], stringsAsFactors = TRUE)
   
   # Loop through the remaining files and merge them
@@ -38,15 +38,33 @@ combine_status_files(oct_status_files, oct_output_file)
 
 ```
 
+```{r}
+Test <- read.csv("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data/2024-10-charging.csv")
+
+```
+
 
 ```{r}
 Test2 <- read.csv("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data/2024-08-charging.csv")
 ```
 
-## Including Plots
-```{r combine to fit the format of other files}
-nov_status_files <- list.files("C:/Users/santar_r/Documents/Rudolph_local/Python/EVSE-Status-Data", pattern = "^evse_statuses_2024-11")
-dec_status_files <- list.files("C:/Users/santar_r/Documents/Rudolph_local/Python/EVSE-Status-Data", pattern = "^evse_statuses_2024-12")
+
+```{r november files}
+nov_status_files <- list.files("C:/Users/santar_r/Documents/Rudolph_local/Python/EVSE-Status-Data", pattern = "^evse_statuses_2024-11",full.names = TRUE)
+
+nov_output_file <- file.path("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data/2024-11-charging.csv")
+
+combine_status_files(nov_status_files, nov_output_file)
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r december files}
+dec_status_files <- list.files("C:/Users/santar_r/Documents/Rudolph_local/Python/EVSE-Status-Data", pattern = "^evse_statuses_2024-12", full.names = TRUE)
+
+dec_output_file <- file.path("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data/2024-12-charging.csv")
+
+combine_status_files(dec_status_files, dec_output_file)
+```
+
+

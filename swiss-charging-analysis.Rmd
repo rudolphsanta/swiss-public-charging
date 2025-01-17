@@ -22,8 +22,8 @@ CH_EVSE_details_short <- CH_EVSE_details %>%
 ```
 
 
-```{r october data}
-charge.points.data <- read.csv("M:/Rudolph/0-Datasets/Switzerland/Swiss-chargers.csv")
+```{r folder location}
+monthly_chg_files <- "C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data"
 ```
 
 
@@ -48,7 +48,7 @@ EVSE_processing <- function(csv_file, merged_object = NULL, id_col = "EvseID") {
 ```
 
 ```{r function to cycle through files in a folder - monthly data}
-read_csvs <- function(main_dir = "M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data", start_f = 1, n_files = 'All') {
+read_csvs <- function(main_dir = monthly_chg_files, start_f = 1, n_files = 'All') {
   # Get list of sub-directories in the main directory
   # subdirs <- list.dirs(main_dir, full.names = TRUE, recursive = FALSE)
   
@@ -93,7 +93,7 @@ read_csvs <- function(main_dir = "M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2
 
 ```{r read and subset csvs}
 
-read_and_filter_csvs <- function(main_dir = "M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data", 
+read_and_filter_csvs <- function(main_dir = monthly_chg_files, 
                                  weekday = 1, 
                                  n_files = 'All') {
   # Get list of files in the main directory
@@ -153,15 +153,16 @@ cat("Execution time was", as.numeric(execution_time, units = "mins"), "min for 4
 print(dim(EVSE_partial.B))
 ```
 ```{r create one wide data frame for the whole dataset - chunked method step 1}
-file_list <- list.files("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data", pattern = "charging\\.csv$")
-num_files <- 22 #length(file_list)
+file_list <- list.files(monthly_chg_files, pattern = "charging\\.csv$")
+num_files <- length(file_list)
 files_in_partial <- 2
 partials_in_chunk <- 2
 files_in_chunk <- files_in_partial * partials_in_chunk
+step_1_subfolder <- "EVSE_partial_step-1" #enter desired subfolder name in the main directory where monthly data are stored.
 
 iterations <- ceiling(num_files/(files_in_chunk))
 
-for(i in seq(1,iterations)) {
+for(i in seq(2,iterations)) {
   # long execution
   start_time <- Sys.time()
   
@@ -189,14 +190,17 @@ for(i in seq(1,iterations)) {
   }
   
   #save the object
-  filepath <- file.path("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data", paste0(obj_name, ".csv"))
-  write.csv(EVSE_partial.result, filepath)
+  filepath <- file.path(monthly_chg_files, step_1_subfolder, paste0(obj_name, ".csv"))  
+  write.csv(EVSE_partial.result, filepath, row.names = FALSE)
   
   rm(EVSE_partial.a,EVSE_partial.b,EVSE_partial.result)
   gc()
 }
 ```
 
+```{r}
+write.csv(EVSE_partial.1, filepath)
+```
 
 ```{r create one wide data frame for the whole dataset - chunked method step 2}
 EVSE_partial_1_2 <- merge(EVSE_partial.1, EVSE_partial.2, by = 'EvseID', all = TRUE)
