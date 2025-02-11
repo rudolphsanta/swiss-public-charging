@@ -1,0 +1,273 @@
+---
+title: "Charging Data Structuring"
+author: "R Santarromana"
+date: "2025-02-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(pxR)
+library(dplyr)
+library(tidyverse)
+
+```
+
+
+```{r charging point details}
+CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/EVSE_details_2024-10-04h.csv") %>%
+  mutate(Power_kW = as.integer(sub("^(\\d+).*", "\\1", ChargingFacilities)))
+
+CH_EVSE_details_short <- CH_EVSE_details %>%
+  select(EvseID, ChargingStationId, ChargingFacilities, Power_kW, Accessibility, City, GeoCoordinates)
+
+```
+
+
+```{r folder location}
+monthly_chg_files <- "C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data"
+```
+
+
+```{r function to convert charging availability tables - monthly data}
+
+EVSE_processing <- function(csv_file, merged_object = NULL, id_col = "EvseID") { #file path as a string input
+  # Read the csv file into a dataframe object
+  my.df <- read.csv(csv_file)
+  
+  # Convert the availability statuses into factors (to save storage space)
+  factor_cols <- 2:dim(my.df)[2]
+  my.df[ , factor_cols] <- lapply(my.df[ , factor_cols],factor)
+
+  # (Optional) Merge with an existing object
+  if(!is.null(merged_object)) {
+    result.df <- merge(merged_object, my.df, by = id_col, all = TRUE)
+    return(result.df) #return a merged dataframe if one is defined
+  }
+  return(my.df) #return the single processed data frame
+}
+
+```
+
+```{r function to cycle through files in a folder - monthly data}
+read_csvs <- function(main_dir = monthly_chg_files, start_f = 1, n_files = 'All') {
+  # Get list of sub-directories in the main directory
+  # subdirs <- list.dirs(main_dir, full.names = TRUE, recursive = FALSE)
+  
+  # Get list of files in the main directory
+  if(n_files == 'All')  file_list <- list.files(main_dir)
+  # to do a subset of the files
+  else {
+    end_f = start_f + n_files - 1
+    file_list <- list.files(main_dir)[start_f:end_f]
+  }
+  
+  df_statuses <- NULL #initiate NULL for the dataframe
+  
+  # Loop through each sub directory
+  for (file in file_list) {
+    start_time <- Sys.time()
+
+    # Create the full path to the CSV file
+    csv_file_path <- file.path(main_dir, file)
+    
+    if(!file.exists(csv_file_path)) next #if the file does not exist, then go to the next one.
+    
+    if(is.null(df_statuses)) { #the first time this is run, df_statuses will be NULL
+      # Read and process the csv
+      df_statuses <- EVSE_processing(csv_file_path)
+    } else {
+      # Read, process, and merge the csv with existing ones
+      df_statuses <- EVSE_processing(csv_file_path, merged_object = df_statuses)
+    }
+    end_time <- Sys.time()
+
+    execution_time <- end_time - start_time
+
+    cat("Execution time was", as.numeric(execution_time, units = "secs"), "s for this iteration.\n")
+
+  }
+  
+  return(df_statuses)
+}
+
+```
+
+```{r read and subset csvs}
+
+read_and_filter_csvs <- function(main_dir = monthly_chg_files, 
+                                 weekday = 1, 
+                                 n_files = 'All') {
+  # Get list of files in the main directory
+  if(n_files == 'All')  file_list <- list.files(main_dir)
+  # to do a subset of the files
+  else {
+    end_f = start_f + n_files - 1
+    file_list <- list.files(main_dir)[start_f:end_f]
+  }
+  
+  df_statuses <- NULL #initiate NULL for the dataframe
+  
+  # Loop through each sub directory
+  for (file in file_list) {
+    start_time <- Sys.time()
+
+    # Create the full path to the CSV file
+    csv_file_path <- file.path(main_dir, file)
+    
+    if(!file.exists(csv_file_path)) next #if the file does not exist, then go to the next one.
+    
+    if(is.null(df_statuses)) { #the first time this is run, df_statuses will be NULL
+      # Read and process the csv
+      df_statuses <- EVSE_processing(csv_file_path)
+    } else {
+      # Read, process, and merge the csv with existing ones
+      df_statuses <- EVSE_processing(csv_file_path, merged_object = df_statuses)
+    }
+    end_time <- Sys.time()
+
+    execution_time <- end_time - start_time
+
+    cat("Execution time was", as.numeric(execution_time, units = "secs"), "s for this iteration.\n")
+
+  }
+  
+  return(df_statuses)
+}
+```
+
+
+```{r create joined df with all availability statuses - chunked method}
+start_time <- Sys.time()
+EVSE_partial.1a <- read_csvs(start_f = 1, n_files = 2)
+EVSE_partial.1b <- read_csvs(start_f = 3, n_files = 2)
+EVSE_partial.A <- merge(EVSE_partial.1a, EVSE_partial.1b, by = 'EvseID', all = TRUE)
+execution_time <- Sys.time() - start_time
+cat("Execution time was", as.numeric(execution_time, units = "secs"), "s for 4 files.\n")
+print(dim(EVSE_partial.A))
+```
+
+```{r create joined df with all availability statuses - running method}
+#This method takes longer
+start_time <- Sys.time()
+EVSE_partial.B <- read_csvs(start_f = 1, n_files = 4)
+execution_time <- Sys.time() - start_time
+cat("Execution time was", as.numeric(execution_time, units = "mins"), "min for 4 files.\n")
+print(dim(EVSE_partial.B))
+```
+
+```{r create one wide data frame for the whole dataset - chunked method step 1}
+file_list <- list.files(monthly_chg_files, pattern = "charging\\.csv$")
+num_files <- length(file_list)
+files_in_partial <- 2
+partials_in_chunk <- 2
+files_in_chunk <- files_in_partial * partials_in_chunk
+step_1_subfolder <- "EVSE_partial_step-1" #enter desired subfolder name in the main directory where monthly data are stored.
+
+iterations <- ceiling(num_files/(files_in_chunk))
+
+for(i in seq(2,iterations)) {
+  # long execution
+  start_time <- Sys.time()
+  
+  if (i == iterations & num_files %% files_in_chunk == 0) { #Check if the last iteration has less than files_in_chunk
+    num_files_final <- num_files %% files_in_chunk #should be a number less than files_in_chunk, but not zero.
+    #execute as a single chunk
+    partial_start <- (files_in_chunk*(i-1)) + 1
+    EVSE_partial.result <- read_csvs(start_f = partial_start, n_files = num_files_final)
+    obj_name <- paste("EVSE_partial", ".", i, sep = "")
+    execution_time <- Sys.time() - start_time
+    cat("Execution time was", as.numeric(execution_time, units = "mins"), "m for",num_files_final,"files.\n")
+    assign(obj_name,EVSE_partial.result) 
+  } else {
+    partial_a_start <- (files_in_chunk*(i-1)) + 1
+    partial_b_start <- partial_a_start + files_in_partial
+    
+    EVSE_partial.a <- read_csvs(start_f = partial_a_start, n_files = files_in_partial)
+    EVSE_partial.b <- read_csvs(start_f = partial_b_start, n_files = files_in_partial)
+    
+    EVSE_partial.result <- merge(EVSE_partial.a, EVSE_partial.b, by = 'EvseID', all = TRUE)
+    obj_name <- paste("EVSE_partial", ".", i, sep = "")
+    execution_time <- Sys.time() - start_time
+    cat("Execution time was", as.numeric(execution_time, units = "mins"), "m for 4 files.\n")
+    assign(obj_name,EVSE_partial.result) 
+  }
+  
+  #save the object
+  filepath <- file.path(monthly_chg_files, step_1_subfolder, paste0(obj_name, ".csv"))  
+  write.csv(EVSE_partial.result, filepath, row.names = FALSE)
+  
+  rm(EVSE_partial.a,EVSE_partial.b,EVSE_partial.result)
+  gc()
+}
+```
+
+```{r function to read in csvs}
+csv_to_df <- function(file) {
+  result <- read.csv(file, as.is = "EvseID")
+  
+  # Find the position of "EvseID" column
+  evse_col <- which(names(result) == "EvseID")
+
+  # Keep columns starting from "EvseID"
+  result <- result[, evse_col:ncol(result)]
+  
+  return(result)
+}
+
+```
+
+
+
+
+```{r create one wide data frame for the whole dataset - chunked method step 2 - Not Used. Resulting Dataframes too large.}
+EVSE_partial_1_2 <- merge(EVSE_partial.1, EVSE_partial.2, by = 'EvseID', all = TRUE)
+rm(EVSE_partial.1, EVSE_partial.2)
+gc()
+
+EVSE_partial_3_4 <- merge(EVSE_partial.3, EVSE_partial.4, by = 'EvseID', all = TRUE)
+rm(EVSE_partial.3, EVSE_partial.4)
+gc()
+
+EVSE_partial_5_6 <- merge(EVSE_partial.5, EVSE_partial.6, by = 'EvseID', all = TRUE)
+rm(EVSE_partial.5, EVSE_partial.6)
+gc()
+
+
+EVSE_df <- merge(EVSE_partial_1_2, EVSE_partial_3_4, by = 'EvseID', all = TRUE)
+rm(EVSE_partial_1_2, EVSE_partial_3_4)
+gc()
+
+EVSE_df <- merge(EVSE_df, EVSE_partial_5_6, by = 'EvseID', all = TRUE)
+rm(EVSE_partial_5_6)
+gc()
+
+write.csv(EVSE_df, "M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data/EVSE_FULL.csv")
+
+
+
+```
+
+
+# Parallel Setup
+```{r chunked execution in parallel setup}
+file_list <- list.files("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_charging-data/Processed-data")
+num_files <- length(file_list)
+files_in_chunk <- 2
+iterations <- ceiling(num_files/files_in_chunk)
+
+```
+
+```{r parallel chunked execution - working}
+library(future)
+library(future.apply)
+library(parallel)
+
+cores <- detectCores() - 2 #max cores available. leave 2 cores unused
+if(cores < iterations) iterations <- cores
+
+plan(multisession, workers = iterations)
+
+file_pairs <- list()
+
+```
+#
