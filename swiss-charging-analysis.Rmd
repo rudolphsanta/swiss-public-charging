@@ -212,16 +212,51 @@ EVSE_util.1.winter <- EVSE_util.1 %>%
 
 summary(EVSE_util.1$month)
 ```
+```{r segment by power level - NOT USED YET}
+# summary(EVSE_df$Power_kW)
+EVSE_lowP <- EVSE_df %>%
+  filter(Power_kW <= 22)
+
+EVSE_medP <- EVSE_df %>%
+  filter(Power_kW <= 100 & Power_kW > 22)
+
+EVSE_highP <- EVSE_df %>% 
+  filter(Power_kW > 100)
+
+EVSE_unknownP <- EVSE_df %>%
+  filter(is.na(Power_kW))
+```
+
+```{r Utilization rate values - by power level - NOT USED YET}
+#takes some time to run
+
+EVSE_util_lowP <- Util_rate(EVSE_lowP)
+
+# EVSE_util_medP <- Util_rate(EVSE_medP)
+
+# EVSE_util_highP <- Util_rate(EVSE_highP)
+
+EVSE_util_ovr <- Util_rate(EVSE_df)
+
+
+```
+
 
 ### Utilization rate curves of each day type
 ```{r get utilization rate for all times in each day type}
-df_list <- c("EVSE_df.2","EVSE_df.3","EVSE_df.4","EVSE_df.5","EVSE_df.6") #include more if there are other datasets included now
+# rm(list = c("win_wk_util","win_sa_util","win_su_util",
+#             "spr_wk_util","spr_sa_util","spr_su_util",
+#             "sum_wk_util","sum_sa_util","sum_su_util",
+#             "fal_wk_util","fal_sa_util","fal_su_util"))
+
+df_list <- c("EVSE_df.1","EVSE_df.2","EVSE_df.3","EVSE_df.4","EVSE_df.5","EVSE_df.6") #include more if there are other datasets included now
 
 #NOTE: If you want to subset by something else (power level, location, etc) that must be done before this step.
 
 for(df in 1:length(df_list)) {
-  this_df <- get(df_list[df])
+  this_df <- get(df_list[1])
   this_df <- availability_summary(this_df) #get the utilization and time details from this partial dataset
+  this_df$hour[this_df$hour == 0] <- 24 #as per conventions, hour 0 should be converted to hour 24
   #check
   leftover_rows <- nrow(this_df)
   
@@ -258,33 +293,33 @@ for(df in 1:length(df_list)) {
   }
   
   #spring
-  spg_df <- this_df %>%
+  spr_df <- this_df %>%
     filter(month %in% c(2,3,4))
 
-  if(!exists("spg_wk_util")) {
-    spg_wk_util <- filter(spg_df, weekday %in% c(1,2,3,4,5))
-    leftover_rows <- leftover_rows - nrow(spg_wk_util)
+  if(!exists("spr_wk_util")) {
+    spr_wk_util <- filter(spr_df, weekday %in% c(1,2,3,4,5))
+    leftover_rows <- leftover_rows - nrow(spr_wk_util)
   } else {
-    this_util <- filter(spg_df, weekday %in% c(1,2,3,4,5))
-    spg_wk_util <- rbind(spg_wk_util,this_util)
+    this_util <- filter(spr_df, weekday %in% c(1,2,3,4,5))
+    spr_wk_util <- rbind(spr_wk_util,this_util)
     leftover_rows <- leftover_rows - nrow(this_util)
   }
   
-  if(!exists("spg_sa_util")) {
-    spg_sa_util <- filter(spg_df, weekday == 6)
-    leftover_rows <- leftover_rows - nrow(spg_sa_util)
+  if(!exists("spr_sa_util")) {
+    spr_sa_util <- filter(spr_df, weekday == 6)
+    leftover_rows <- leftover_rows - nrow(spr_sa_util)
   } else {
-    this_util <- filter(spg_df, weekday == 6)
-    spg_sa_util <- rbind(spg_sa_util,this_util)
+    this_util <- filter(spr_df, weekday == 6)
+    spr_sa_util <- rbind(spr_sa_util,this_util)
     leftover_rows <- leftover_rows - nrow(this_util)
   }
   
-  if(!exists("spg_su_util")) {
-    spg_su_util <- filter(spg_df, weekday == 7)
-    leftover_rows <- leftover_rows - nrow(spg_su_util)
+  if(!exists("spr_su_util")) {
+    spr_su_util <- filter(spr_df, weekday == 7)
+    leftover_rows <- leftover_rows - nrow(spr_su_util)
   } else {
-    this_util <- filter(spg_df, weekday == 7)
-    spg_su_util <- rbind(spg_su_util,this_util)
+    this_util <- filter(spr_df, weekday == 7)
+    spr_su_util <- rbind(spr_su_util,this_util)
     leftover_rows <- leftover_rows - nrow(this_util)
   }
   
@@ -353,44 +388,66 @@ for(df in 1:length(df_list)) {
   print(leftover_rows)
 }
 
+rm(list = c("spr_df","sum_df","fal_df","win_df")) #these were temporarily assigned in each loop
+
 
 ```
+
 
 ```{r}
-sum_su_util
+get_timeslice_ci <- function(hr, util_df, z = 1.96) {
+  filtered_df <- util_df %>%
+    filter(hour == hr) 
+  
+  utilization <- filtered_df$utilization
+  
+  if(min(utilization, na.rm = TRUE) <= 0) warning("There are negative utilization rates in the dataframe.")
+  
+  
+  sample.mean <- mean(utilization, na.rm = TRUE)
+  sample.sd <- sd(utilization, na.rm = TRUE)
+  sample.n <- length(utilization)
+  sample.min <- min(utilization, na.rm = TRUE)
+  sample.max <- max(utilization, na.rm = TRUE)
+  
+  CI.high <- sample.mean + z*(sample.sd/sqrt(sample.n))
+  CI.low <- sample.mean - z*(sample.sd/sqrt(sample.n))
+  
+  return(list("max" = sample.max,
+              "high" = CI.high,
+              "low" = CI.low,
+              "min" = sample.min))
+  
+}
 ```
 
 
+```{r Get overall utilization curves}
+hrs <- seq(1,24)
 
-```{r segment by power level}
-# summary(EVSE_df$Power_kW)
-EVSE_lowP <- EVSE_df %>%
-  filter(Power_kW <= 22)
+daytype_names <- c("win_wk","win_sa","win_su",
+                   "spr_wk","spr_sa","spr_su",
+                   "sum_wk","sum_sa","sum_su",
+                   "fal_wk","fal_sa","fal_su")
 
-EVSE_medP <- EVSE_df %>%
-  filter(Power_kW <= 100 & Power_kW > 22)
+for(day in daytype_names) {
+  CI_df_name <- paste0(day,"_CI")
+  df_name <- paste0(day,"_util")
+  
+  this_df <- get(df_name)
+  
+  this_CI_df <- sapply(hrs, get_timeslice_ci, util_df = this_df, simplify = 'array')
+  
+  # this_CI_df <- data.frame(this_CI_df)
+  
+  assign(this_CI_df, CI_df_name)
+}
 
-EVSE_highP <- EVSE_df %>% 
-  filter(Power_kW > 100)
+spr_wk_CI <- sapply(hrs, get_timeslice_ci, util_df = spr_wk_util, simplify = 'array')
 
-EVSE_unknownP <- EVSE_df %>%
-  filter(is.na(Power_kW))
+#Result of this block is to have several day type dataframes with the confidence interval, minimum, and maximums over each hour (and therefore, each timeslice)
 ```
 
-
-```{r Utilization rate values - by power level}
-#takes some time to run
-
-EVSE_util_lowP <- Util_rate(EVSE_lowP)
-
-# EVSE_util_medP <- Util_rate(EVSE_medP)
-
-# EVSE_util_highP <- Util_rate(EVSE_highP)
-
-EVSE_util_ovr <- Util_rate(EVSE_df)
-
-
-```
 
 ```{r}
 summary(EVSE_util_ovr)
