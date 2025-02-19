@@ -254,7 +254,7 @@ df_list <- c("EVSE_df.1","EVSE_df.2","EVSE_df.3","EVSE_df.4","EVSE_df.5","EVSE_d
 #NOTE: If you want to subset by something else (power level, location, etc) that must be done before this step.
 
 for(df in 1:length(df_list)) {
-  this_df <- get(df_list[1])
+  this_df <- get(df_list[df])
   this_df <- availability_summary(this_df) #get the utilization and time details from this partial dataset
   this_df$hour[this_df$hour == 0] <- 24 #as per conventions, hour 0 should be converted to hour 24
   #check
@@ -395,40 +395,63 @@ rm(list = c("spr_df","sum_df","fal_df","win_df")) #these were temporarily assign
 
 
 ```{r}
-get_timeslice_ci <- function(hr, util_df, z = 1.96) {
-  filtered_df <- util_df %>%
-    filter(hour == hr) 
+get_timeslice_ci <- function(util_df, hrs = seq(1,24), z = 1.96) {
+  max <- c()
+  high <- c()
+  median <- c()
+  mean <- c()
+  low <- c()
+  min <- c()
   
-  utilization <- filtered_df$utilization
+  if(min(util_df$utilization, na.rm = TRUE) <= 0) warning("There are negative utilization rates in the dataframe.")
+  if(sum(is.na(util_df$utilization)) > 0 ) warning("There are NA values for utilization rates in the dataframe.")
   
-  if(min(utilization, na.rm = TRUE) <= 0) warning("There are negative utilization rates in the dataframe.")
+  for(hr in hrs) {
+    filtered_df <- util_df %>%
+      filter(hour == hr) 
   
+    utilization <- filtered_df$utilization
+    
+    sample.mean <- mean(utilization, na.rm = TRUE)
+    sample.median <- median(utilization, na.rm = TRUE)
+    sample.sd <- sd(utilization, na.rm = TRUE)
+    sample.n <- length(utilization)
+    sample.min <- min(utilization, na.rm = TRUE)
+    sample.max <- max(utilization, na.rm = TRUE)
+    
+    CI.high <- sample.mean + z*(sample.sd/sqrt(sample.n))
+    CI.low <- sample.mean - z*(sample.sd/sqrt(sample.n))
+    
+    #collect values into vectors
+    max <- c(max,sample.max)
+    high <- c(high,CI.high)
+    median <- c(median,sample.median)
+    mean <- c(mean,sample.mean)
+    low <- c(low,CI.low)
+    min <- c(min,sample.min)
+    
+  }
   
-  sample.mean <- mean(utilization, na.rm = TRUE)
-  sample.sd <- sd(utilization, na.rm = TRUE)
-  sample.n <- length(utilization)
-  sample.min <- min(utilization, na.rm = TRUE)
-  sample.max <- max(utilization, na.rm = TRUE)
-  
-  CI.high <- sample.mean + z*(sample.sd/sqrt(sample.n))
-  CI.low <- sample.mean - z*(sample.sd/sqrt(sample.n))
-  
-  return(list("max" = sample.max,
-              "high" = CI.high,
-              "low" = CI.low,
-              "min" = sample.min))
+  #return the dataframe of the vectors collected
+  return(data.frame("hour" = hrs,
+                    "max" = max,
+                    "CI_high" = high,
+                    "median" = median,
+                    "mean" = mean,
+                    "CI_low" = low,
+                    "min" = min))
   
 }
 ```
 
 
 ```{r Get overall utilization curves}
-hrs <- seq(1,24)
-
 daytype_names <- c("win_wk","win_sa","win_su",
                    "spr_wk","spr_sa","spr_su",
                    "sum_wk","sum_sa","sum_su",
                    "fal_wk","fal_sa","fal_su")
+
+# day <- daytype_names[2]
 
 for(day in daytype_names) {
   CI_df_name <- paste0(day,"_CI")
@@ -436,36 +459,98 @@ for(day in daytype_names) {
   
   this_df <- get(df_name)
   
-  this_CI_df <- sapply(hrs, get_timeslice_ci, util_df = this_df, simplify = 'array')
+  this_CI_df <- get_timeslice_ci(this_df, z = 2.576)
   
-  # this_CI_df <- data.frame(this_CI_df)
-  
-  assign(this_CI_df, CI_df_name)
+  assign(CI_df_name, this_CI_df)
 }
-
-spr_wk_CI <- sapply(hrs, get_timeslice_ci, util_df = spr_wk_util, simplify = 'array')
 
 #Result of this block is to have several day type dataframes with the confidence interval, minimum, and maximums over each hour (and therefore, each timeslice)
 ```
 
+```{r Save full utilization dataframes}
+daytype_folder <- "M:/Rudolph/R-Projects/swiss-public-charging/data/daytype_dataframes"
+for(day in daytype_names) {
+  df_name <- paste0(day,"_util")
+  csv_name <- paste0(df_name,".csv")
+  
+  this_df <- get(df_name)
+  
+  filepath <- file.path(daytype_folder, csv_name)  
+  write.csv(this_df, filepath, row.names = FALSE)
+  
+}
+```
+
+
+```{r Save confidence interval dataframes}
+daytype_ci_folder <- "M:/Rudolph/R-Projects/swiss-public-charging/data/daytype_ci"
+for(day in daytype_names) {
+  CI_df_name <- paste0(day,"_CI")
+  csv_name <- paste0(CI_df_name,".csv")
+  
+  this_df <- get(CI_df_name)
+  
+  filepath <- file.path(daytype_ci_folder, csv_name)  
+  write.csv(this_df, filepath, row.names = FALSE)
+}
+  
+```
+
+
+#Visualizations of utlization
+```{r Visualization function}
+visualize_utilization_summary <- function(util_CI_df, title = "Utilization Summary") {
+  y_max <- ceiling(max(util_CI_df$max)*100)
+  y_max <- y_max + 5 - (y_max %% 5) #gets the maximum value up to the nearest 5
+  
+  plot(x = util_CI_df$hour, y = util_CI_df$median*100, 
+     ylim = c(0,y_max), ylab = "Utilization [%]", xlab = "Hour", 
+     main = title,
+     col = 'black', cex = 0.8, type = 'l')
+  lines(x = util_CI_df$hour, y = util_CI_df$CI_low*100, col = 'blue')
+  lines(x = util_CI_df$hour, y = util_CI_df$CI_high*100, col = 'blue')
+  lines(x = util_CI_df$hour, y = util_CI_df$min*100, col = 'red')
+  lines(x = util_CI_df$hour, y = util_CI_df$max*100, col = 'red')
+
+}
+
+```
 
 ```{r}
-summary(EVSE_util_ovr)
-
-plot(x = EVSE_util_ovr$hour, y = EVSE_util_ovr$utilization*100, 
-     ylim = c(0,20), ylab = "Utilization [%]", xlab = "Hour", 
-     col = 'black', pch = 19, cex = 0.8)
-
-hist(filter(EVSE_util_ovr, hour == 5)$utilization)
-
-summary(EVSE_util_lowP)
-
-plot(x = EVSE_util_lowP$hour, y = EVSE_util_lowP$utilization*100, 
-     ylim = c(0,20), ylab = "Utilization [%]", xlab = "Hour", 
-     col = 'black', pch = 19, cex = 0.8)
-
-hist(filter(EVSE_util_lowP, hour == 5)$utilization)
+visualize_utilization_summary(win_wk_CI)
 ```
+
+NOTE: 
+this confidence interval is super tight which indicates that there could be some autocorrelation between the hours, plus the fact that I have 20 observations per hour (every 5 minutes. I might want to consider a bootstrap method to get the confidence interval in a future iteration.)
+```{r Bootstrap code}
+
+bootstrap_ci <- function(data, num_bootstrap_samples = 10000, ci = 95) {
+  boot_samples <- replicate(num_bootstrap_samples, median(sample(data, replace = TRUE)))
+  
+  lower <- quantile(boot_samples, (100 - ci) / 2 / 100)
+  upper <- quantile(boot_samples, 1 - (100 - ci) / 2 / 100)
+  
+  return(c(lower, upper))
+}
+
+# Compute bootstrap confidence intervals for each hour
+hourly_cis <- df %>%
+  group_by(hour) %>%
+  summarise(
+    Lower_CI = bootstrap_ci(utilization_rate)[1],
+    Upper_CI = bootstrap_ci(utilization_rate)[2]
+  )
+
+# Print the results
+print(hourly_cis)
+
+```
+
+
+
+
+
+
 
 ```{r function to get certain parameters}
 Subset_EVSE <- function(df_input, year.f = NULL, month.f = NULL, day.f = NULL, weekday.f = NULL, hour.f = NULL) {
