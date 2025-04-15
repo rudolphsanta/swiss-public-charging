@@ -22,9 +22,12 @@ CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/EV
   mutate(Power_kW = as.integer(sub("^(\\d+).*", "\\1", ChargingFacilities)))
 
 CH_EVSE_details_short <- CH_EVSE_details %>%
-  select(EvseID, ChargingStationId, ChargingFacilities, Power_kW, Accessibility, City, GeoCoordinates)
+  select(EvseID, ChargingStationId, ChargingFacilities, Power_kW, Accessibility, City, GeoCoordinates) %>%
+  separate(GeoCoordinates, into = c("latitude", "longitude"), sep = " ", convert = TRUE)
 
 ```
+
+
 ```{r summarise charging point dataset}
 summary(CH_EVSE_details_short$Power_kW)
 hist(CH_EVSE_details_short$Power_kW, breaks = "FD", xlab = "Charge Point Power [kW]", main = "")
@@ -96,7 +99,49 @@ read_csvs <- function(main_dir = monthly_chg_files, start_f = 1, n_files = 'All'
 
 ```
 
+```{r Spatial join of charging infrastructure}
 
+library(sf)
+
+#load Swiss Cantonal boundaries shapefile
+CH_Cantons <- st_read("M:/Rudolph/0-Datasets/Switzerland/Swiss_admin_boundaries_shapefiles/swissBOUNDARIES3D_1_5_TLM_KANTONSGEBIET.shp")
+
+#load Swiss District boundaries shapefile
+CH_Districts <- st_read("M:/Rudolph/0-Datasets/Switzerland/Swiss_admin_boundaries_shapefiles/swissBOUNDARIES3D_1_5_TLM_BEZIRKSGEBIET.shp")
+
+#convert charging data "CH_EVSE_details_short" into an sf format
+CH_EVSE_sf <- st_as_sf(CH_EVSE_details_short, coords = c("longitude", "latitude"), crs = 4326) %>%
+  st_transform(., st_crs(CH_Cantons))
+
+#spatial join of cantons
+CH_EVSE_locations <- st_join(CH_EVSE_sf, CH_Cantons %>% select(NAME), join = st_within) %>%
+  rename(Canton = NAME)
+
+#spatial join of districts
+CH_EVSE_locations <- st_join(CH_EVSE_locations, CH_Districts %>% select(NAME), join = st_within) %>%
+  rename(District = NAME)
+
+CH_EVSE_df <- CH_EVSE_locations %>%
+  st_drop_geometry()
+
+```
+
+```{r Total Swiss Charging Aggregated}
+CH_chgpts <- read.csv("M:/Rudolph/0-Datasets/Switzerland/Swiss_Charging_Stock_April2025.csv") 
+
+CH_chgpts_pwr <- CH_chgpts %>%
+  select(year,month,contains("kW_count")) %>%
+  rename(count_10 = chargingPower_10kW_count,
+         count_21 = chargingPower_21kW_count,
+         count_42 = chargingPower_42kW_count,
+         count_100 = chargingPower_100kW_count,
+         count_100plus = chargingPower_100pluskW_count)
+
+colnames(CH_chgpts_pwr[,-c(year,month)]) <- gsub("^[^_]*_([^_]+)_.*$", "\\1", colnames(CH_chgpts_pwr[,-c(year,month)]))
+
+
+
+```
 
 
 ```{r function to read in csvs}
@@ -150,6 +195,16 @@ EVSE_df.5 <- merge_power_location(EVSE_partial.5)
 EVSE_df.6 <- merge_power_location(EVSE_partial.6)
 
 ```
+```{r Data snipit}
+Full_EVSE_df <- EVSE_df.6 %>%
+  select(EvseID,Power_kW, City)
+
+unique(Full_EVSE_df$City)
+
+write.csv(Full_EVSE_df, "M:/Rudolph/0-Datasets/Switzerland/Charging_point_IDs.csv")
+```
+
+
 
 ```{r function to get the utilization rate of each collected timestamp}
 availability_summary <- function(df_input) { #takes the df object from function "read_csvs()" as the input
@@ -494,6 +549,44 @@ for(day in daytype_names) {
   write.csv(this_df, filepath, row.names = FALSE)
 }
   
+```
+
+```{r Create and save a df that can be copy/pasted into VEDA}
+#needs a column for timeslice in the form SPR-WK-D01 and the utilization rate value (as a decimal)
+hrs <- seq(1,24)
+TimeSlice <- c()
+Utilization_min <- c()
+Utilization_median <- c()
+Utilization_max <- c()
+
+day <- daytype_names[1]
+for(day in daytype_names) {
+  this_df_name <- paste0(day,"_CI")
+  this_df <- get(this_df_name)
+  for(hr in hrs) {
+    this_TS_name <- sprintf("%s-D%02d", gsub("_", "-", toupper(day)), hr) #correctly formats the string to fit VEDA needs
+    this_utilization_min <- this_df[this_df$hour == hr, "min"]
+    this_utilization_median <- this_df[this_df$hour == hr, "median"]
+    this_utilization_max <- this_df[this_df$hour == hr, "max"]
+    
+    TimeSlice <- c(TimeSlice,this_TS_name)
+    Utilization_min <- c(Utilization_min,this_utilization_min)
+    Utilization_median <- c(Utilization_median,this_utilization_median)
+    Utilization_max <- c(Utilization_max,this_utilization_max)
+
+  }
+}
+
+result <- data.frame("TimeSlice" = TimeSlice,
+                     "Utilization_min" = Utilization_min,
+                     "Utilization_median" = Utilization_median,
+                     "Utilization_max" = Utilization_max)
+
+
+
+```
+```{r}
+write.csv(result,  "M:/Rudolph/R-Projects/swiss-public-charging/data/timeslice_ci.csv")
 ```
 
 
