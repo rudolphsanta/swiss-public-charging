@@ -16,8 +16,17 @@ combine_status_files <- function(file_paths,output_file) {
   # Loop through the remaining files and merge them
   for (i in 2:length(file_paths)) {
     if (!file.exists(file_paths[i])) stop(paste("File not found:", filepaths[i]))
+    
     current_data <- read.csv(file_paths[i], stringsAsFactors = TRUE)
     merged_data <- merge(merged_data, current_data, by = "EvseID", all = TRUE)
+    
+    pct <- (i/length(file_paths))*100
+    round_pct <- round(pct,0) #percent with no decimals
+    if(round_pct %% 10 == 0) { #if it hits 10%...
+      time_now <- format(Sys.time(), "%H:%M:%S")
+      cat(sprintf("\r%3.0f%% complete at %s.", round_pct, time_now))
+      flush.console()
+    }
   }
   
   # Save the merged data to a CSV file
@@ -67,4 +76,58 @@ dec_output_file <- file.path("M:/Rudolph/0-Datasets/Switzerland/Jan2022-Sep2024_
 combine_status_files(dec_status_files, dec_output_file)
 ```
 
+```{r january files}
+jan_status_files <- list.files("P:/Rudolph/Datasets/EVSE-Status-Data", pattern = "^evse_statuses_2025-01", full.names = TRUE)
 
+jan_output_file <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data/2025-01-charging.csv")
+
+combine_status_files(jan_status_files, jan_output_file)
+```
+
+```{r february files}
+feb_status_files <- list.files("P:/Rudolph/Datasets/EVSE-Status-Data", pattern = "^evse_statuses_2025-02", full.names = TRUE)
+
+feb_output_file <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data/2025-02-charging.csv")
+
+combine_status_files(feb_status_files, feb_output_file)
+```
+
+```{r march files}
+mar_status_files <- list.files("P:/Rudolph/Datasets/EVSE-Status-Data", pattern = "^evse_statuses_2025-03", full.names = TRUE)
+
+mar_output_file <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data/2025-03-charging.csv")
+
+combine_status_files(mar_status_files, mar_output_file)
+```
+
+```{r april files}
+apr_status_files <- list.files("P:/Rudolph/Datasets/EVSE-Status-Data", pattern = "^evse_statuses_2025-04", full.names = TRUE)
+
+apr_output_file <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data/2025-04-charging.csv")
+
+combine_status_files(apr_status_files, apr_output_file)
+```
+
+```{r may files}
+may_status_files <- list.files("P:/Rudolph/Datasets/EVSE-Status-Data", pattern = "^evse_statuses_2025-05", full.names = TRUE)
+
+may_output_file <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data/2025-05-charging.csv")
+
+combine_status_files(may_status_files, may_output_file)
+```
+
+```{r june files}
+jun_status_files <- list.files("P:/Rudolph/Datasets/EVSE-Status-Data", pattern = "^evse_statuses_2025-06", full.names = TRUE)
+
+jun_output_file <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data/2025-06-charging.csv")
+
+combine_status_files(jun_status_files, jun_output_file)
+```
+
+```{r july files}
+jul_status_files <- list.files("P:/Rudolph/Datasets/EVSE-Status-Data", pattern = "^evse_statuses_2025-07", full.names = TRUE)
+
+jul_output_file <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data/2025-07-charging.csv")
+
+combine_status_files(jul_status_files, jul_output_file)
+```

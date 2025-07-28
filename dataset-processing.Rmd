@@ -147,6 +147,7 @@ Util_rate <- function(df_input) { #takes the df object from function "read_csvs(
 EVSE_util_df <- Util_rate(EVSE_df)
 
 ```
+
 ```{r clean data}
 EVSE_util_df_cleaned <- EVSE_util_df %>%
   filter(unknown < 1000) #remove instances where 'unknown' CPs are too high, this is likely a data collection error

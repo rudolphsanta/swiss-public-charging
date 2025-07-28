@@ -8,6 +8,7 @@ date: "2024-11-04"
 library(pxR)
 library(dplyr)
 library(tidyverse)
+library(csv)
 
 ```
 
@@ -25,6 +26,48 @@ CH_EVSE_details_short <- CH_EVSE_details %>%
   select(EvseID, ChargingStationId, ChargingFacilities, Power_kW, Accessibility, City, GeoCoordinates) %>%
   separate(GeoCoordinates, into = c("latitude", "longitude"), sep = " ", convert = TRUE)
 
+```
+
+```{r}
+CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/ChargingStationDetails_22-07-2025.csv",
+                            colClasses = c(
+                              # DynamicInfoAvailable = "character",
+                              IsOpen24Hours = "logical",
+                              LastUpdate = "character",
+                              MaxCapacity = "numeric",
+                              ChargingFacility_power = "numeric"
+                              ),
+                            stringsAsFactors = TRUE
+) %>%
+  select(EvseID,ChargingStationId,Accessibility,GeoCoordinates,City,Country,PostalCode,Street,IsOpen24Hours,LastUpdate,DynamicInfoAvailable,DynamicPowerLevel,ChargingFacility_power,ChargingFacility_powertype) %>%
+  separate(GeoCoordinates, into = c("latitude", "longitude"), sep = " ", convert = TRUE)
+
+CH_EVSE_details$LastUpdate <- ymd_hms(CH_EVSE_details$LastUpdate, tz = "UTC")
+
+head(CH_EVSE_details)
+```
+
+
+```{r}
+summary(CH_EVSE_details)
+```
+```{r Cleaning the charger dataset}
+# CH_EVSE_details[CH_EVSE_details$longitude < 6, ]
+
+CH_EVSE_details_cleaned <- CH_EVSE_details
+
+#convert longitude and latitude to NA if they fall outside of the country extents
+CH_EVSE_details_cleaned$longitude <- ifelse(
+  CH_EVSE_details_cleaned$longitude >= 5.5 & CH_EVSE_details_cleaned$longitude <= 10.5,
+  CH_EVSE_details_cleaned$longitude,
+  NA)
+
+CH_EVSE_details_cleaned$latitude <- ifelse(
+  CH_EVSE_details_cleaned$latitude >= 45.5 & CH_EVSE_details_cleaned$latitude <= 47.9,
+  CH_EVSE_details_cleaned$latitude,
+  NA)
+
+summary(CH_EVSE_details_cleaned)
 ```
 
 
@@ -146,7 +189,7 @@ colnames(CH_chgpts_pwr[,-c(year,month)]) <- gsub("^[^_]*_([^_]+)_.*$", "\\1", co
 
 ```{r function to read in csvs}
 csv_to_df <- function(file) {
-  result <- read.csv(file, as.is = "EvseID")
+  result <- read.csv(file, as.is = "EvseID", stringsAsFactors = TRUE)
   
   # Find the position of "EvseID" column
   evse_col <- which(names(result) == "EvseID")
@@ -174,27 +217,71 @@ EVSE_partial.6 <- csv_to_df("C:/Users/santar_r/Documents/Rudolph_local/Datasets/
 #### Adding columns to processed charging dataset
 ```{r function to merge power level of each charger}
 merge_power_location <- function(EVSE_partial_df) {
-  EVSE_df <- merge(EVSE_partial_df, CH_EVSE_details_short[ , c('EvseID','Power_kW','City')], by = 'EvseID', all.x = TRUE)
+  EVSE_df <- merge(EVSE_partial_df, CH_EVSE_details_cleaned[ , c('EvseID','ChargingFacility_power','City')], by = 'EvseID', all.x = TRUE)
 
+  #If any unmatched rows, attempt to match EvseID with ChargingStationId instead
+  unmatched <- is.na(EVSE_df$ChargingFacility_power)
+  
+  if(any(unmatched)) {
+    print("unmatched rows exist")
+    unmatched_df <- EVSE_partial_df[unmatched, ]
+  # Merge unmatched rows on ChargingStationId instead
+  
+    fallback_merge <- merge(unmatched_df, CH_EVSE_details_cleaned[ , c('ChargingStationId','ChargingFacility_power','City')],
+      by.x = 'EvseID',
+      by.y = 'ChargingStationId',
+      all.x = TRUE
+    )
+   
+    EVSE_df <- EVSE_df[!unmatched, ]
+    EVSE_df <- rbind(EVSE_df, fallback_merge)
+
+    print("merged df created")
+  }
+    
   EVSE_df <- EVSE_df %>%
     relocate(City, .after = EvseID) %>%
-    relocate(Power_kW, .after = EvseID)
+    relocate(ChargingFacility_power, .after = EvseID)
   
   return(EVSE_df)
 }
-
 ```
 
 
 ```{r add charge point data (power and location) to the partial dfs}
 EVSE_df.1 <- merge_power_location(EVSE_partial.1)
+summary(EVSE_df.1$ChargingFacility_power)
 EVSE_df.2 <- merge_power_location(EVSE_partial.2)
 EVSE_df.3 <- merge_power_location(EVSE_partial.3)
 EVSE_df.4 <- merge_power_location(EVSE_partial.4)
 EVSE_df.5 <- merge_power_location(EVSE_partial.5)
 EVSE_df.6 <- merge_power_location(EVSE_partial.6)
+summary(EVSE_df.6$ChargingFacility_power)
+```
+
+```{r Check how many EvseIDs are not matching (we don't have data for them)}
+length(EVSE_df.1$EvseID) #14350
+length(EVSE_df.6$EvseID) #23485
+length(CH_EVSE_details$EvseID) #19307
+matches <- CH_EVSE_details$EvseID %in% EVSE_df.6$EvseID 
+no_matches <- !matches
+no_matches_EvseID <- CH_EVSE_details$EvseID[no_matches]
+
+num_nomatches <- sum(no_matches)
+
+EVSE_df.6_nomatch <- EVSE_df.6[no_matches,]
+
+CH_EVSE_details_nomatch <- CH_EVSE_details[CH_EVSE_details$EvseID %in% no_matches_EvseID, ]
+
+station_matches <- CH_EVSE_details_nomatch$ChargingStationId %in% no_matches_EvseID
+
+sum(station_matches)
+
+no_matches_stations <- CH_EVSE_details_nomatch[station_matches, ]
+
 
 ```
+
 ```{r Data snipit}
 Full_EVSE_df <- EVSE_df.6 %>%
   select(EvseID,Power_kW, City)
@@ -585,6 +672,7 @@ result <- data.frame("TimeSlice" = TimeSlice,
 
 
 ```
+
 ```{r}
 write.csv(result,  "M:/Rudolph/R-Projects/swiss-public-charging/data/timeslice_ci.csv")
 ```
