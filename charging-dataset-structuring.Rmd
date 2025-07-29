@@ -12,14 +12,18 @@ library(tidyverse)
 
 ```
 
+```{r SANDBOX}
+# Load required package
+library(jsonlite)
 
-```{r charging point details}
-CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/EVSE_details_2024-10-04h.csv") %>%
-  mutate(Power_kW = as.integer(sub("^(\\d+).*", "\\1", ChargingFacilities)))
+# Read JSON file (replace with your actual path)
+json_data <- fromJSON("P:/Rudolph/Swiss-EVChg-Data/2024-09/data-2024-09-01-00-01-02.json")
 
-CH_EVSE_details_short <- CH_EVSE_details %>%
-  select(EvseID, ChargingStationId, ChargingFacilities, Power_kW, Accessibility, City, GeoCoordinates)
+# Navigate to the nested data
+test_df <- json_data$EVSEStatuses[[1]]$EVSEStatusRecord
 
+# View the result
+head(test_df)
 ```
 
 
@@ -165,11 +169,11 @@ step_1_subfolder <- "EVSE_partial_step-1" #enter desired subfolder name in the m
 
 iterations <- ceiling(num_files/(files_in_chunk))
 
-for(i in seq(2,iterations)) {
+for(i in seq(7,iterations)) {
   # long execution
   start_time <- Sys.time()
   
-  if (i == iterations & num_files %% files_in_chunk == 0) { #Check if the last iteration has less than files_in_chunk
+  if (i == iterations & num_files %% files_in_chunk != 0) { #Check if the last iteration has less than files_in_chunk
     num_files_final <- num_files %% files_in_chunk #should be a number less than files_in_chunk, but not zero.
     #execute as a single chunk
     partial_start <- (files_in_chunk*(i-1)) + 1
@@ -196,9 +200,12 @@ for(i in seq(2,iterations)) {
   filepath <- file.path(monthly_chg_files, step_1_subfolder, paste0(obj_name, ".csv"))  
   write.csv(EVSE_partial.result, filepath, row.names = FALSE)
   
-  rm(EVSE_partial.a,EVSE_partial.b,EVSE_partial.result)
+  rm(list = intersect(c("EVSE_partial.a", "EVSE_partial.b", "EVSE_partial.result"), ls()))
   gc()
 }
+```
+```{r}
+write.csv(CH_EVSE_details,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data/EVSE_partial_step-1/Test.csv")
 ```
 
 ```{r function to read in csvs}

@@ -18,7 +18,7 @@ monthly_chg_files <- "C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzer
 chunked_chg_files <- "C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data/EVSE_partial_step-1"
 ```
 
-```{r charging point details}
+```{r charging point details - Prior to July 2025. Can DELETE}
 CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/EVSE_details_2024-10-04h.csv") %>%
   mutate(Power_kW = as.integer(sub("^(\\d+).*", "\\1", ChargingFacilities)))
 
@@ -28,7 +28,7 @@ CH_EVSE_details_short <- CH_EVSE_details %>%
 
 ```
 
-```{r}
+```{r Charging Point Details}
 CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/ChargingStationDetails_22-07-2025.csv",
                             colClasses = c(
                               # DynamicInfoAvailable = "character",
@@ -50,7 +50,9 @@ head(CH_EVSE_details)
 
 ```{r}
 summary(CH_EVSE_details)
+
 ```
+
 ```{r Cleaning the charger dataset}
 # CH_EVSE_details[CH_EVSE_details$longitude < 6, ]
 
@@ -72,9 +74,8 @@ summary(CH_EVSE_details_cleaned)
 
 
 ```{r summarise charging point dataset}
-summary(CH_EVSE_details_short$Power_kW)
-hist(CH_EVSE_details_short$Power_kW, breaks = "FD", xlab = "Charge Point Power [kW]", main = "")
-boxplot(CH_EVSE_details_short$Power_kW)
+hist(CH_EVSE_details_cleaned$ChargingFacility_power, xlab = "Charge Point Power [kW]", main = "")
+# boxplot(CH_EVSE_details_cleaned$ChargingFacility_power)
 ```
 
 
