@@ -1,0 +1,184 @@
+---
+title: "Raw Data Processing"
+author: "R Santarromana"
+date: "2025-09-04"
+output: html_document
+---
+
+#This file converts collected raw data from public charging (.json files) into .csv files which can then be read into data tables.
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(tidyverse)
+library(jsonlite)
+library(tidyr)
+library(stringr)
+library(lubridate)
+```
+
+```{r file locations}
+#Locations of the main folders for input and output.
+
+##All the raw data are collected and stored here
+raw_data_root <- file.path("P:/Rudolph/Swiss-EVChg-Data") #there are monthly folders in this directory
+
+output_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data")
+
+```
+
+```{r functions for processing}
+json_to_df <- function(json_file_path) {
+  json_data <- fromJSON(json_file_path)
+  
+  #the timestamp from this file in YYYY-MM-DD-HH-MM format
+  timestamp <- basename(json_file_path) %>%
+    str_remove("data-") %>%
+    str_remove(".json") %>%
+    as.POSIXct(format = "%Y-%m-%d-%H-%M-%S", tz = "Europe/Zurich") 
+  
+  num_operators <- length(json_data$EVSEStatuses$EVSEStatusRecord)
+  
+  #first time through
+  # op_df <- json_data$EVSEStatuses$EVSEStatusRecord[[1]]
+  # all_op_statuses_df <- bind_rows(lapply(op_df[[1]], function(x) {
+  #   tryCatch(bind_rows(x), error = function(e) NULL)}))
+  
+  all_op_statuses_df <- json_data$EVSEStatuses$EVSEStatusRecord[[1]]
+  #all other operators
+  for(n in 2:num_operators) {
+    # op_df <- json_data$EVSEStatuses$EVSEStatusRecord[[n]]
+    # this_op_statuses_df <- bind_rows(lapply(op_df[[1]], function(x) {
+    #   tryCatch(bind_rows(x), error = function(e) NULL)}))
+    this_op_statuses_df <- json_data$EVSEStatuses$EVSEStatusRecord[[n]]
+    all_op_statuses_df <- rbind(all_op_statuses_df, this_op_statuses_df)
+  }
+
+  all_op_statuses_df <- all_op_statuses_df %>%
+    mutate(datetime = timestamp,
+           full_datetime = format(timestamp, "%Y-%m-%d-%H-%M"),  # for viewing/export
+           EvseID = as.factor(EvseID),
+           EVSEStatus = as.factor(EVSEStatus)) %>%
+    select(datetime, full_datetime, everything())
+  
+  return(all_op_statuses_df)
+}
+
+
+operator_dict <- function(json_file_path, existing_operator_dict = NULL) {
+  json_data <- fromJSON(json_file_path)
+  num_operators <- length(json_data$EVSEStatuses)
+
+  op_dict <- data.frame("OperatorID"= NULL, "OperatorName" = NULL)
+  
+  for(n in 1:num_operators) {
+    op_ID <- json_data$EVSEStatuses[[n]][[2]]
+    op_name <- json_data$EVSEStatuses[[n]][[3]]
+    this_op <- data.frame("OperatorID" = op_ID, "OperatorName" = op_name)
+    
+    op_dict <- rbind(op_dict, this_op)
+  }
+  
+  if(!is.null(existing_operator_dict)){
+    op_dict <- merge(existing_operator_dict, by = "OperatorName", all.x = TRUE)
+  }
+  return(op_dict)
+}
+```
+
+```{r SANDBOX}
+Z <- mar_json_data$EVSEStatuses$EVSEStatusRecord[[2]]
+undebug(json_to_df)
+A <- json_to_df(aug_files[1])
+
+mar_json_data <- fromJSON(mar_files[1])
+aug_json_data <- fromJSON(aug_files[1])
+
+
+```
+
+
+```{r process august 2025}
+sub_folder <- "2025-08"
+full_path <- file.path(raw_data_root, sub_folder)
+
+# Get list of all files
+month_status_files <- list.files(full_path, full.names = TRUE)
+
+# Optional: filter only files with minutes ending in 0 or 5
+month_status_files <- month_status_files[grepl("-[0-5][05]-\\d{2}\\.json$", month_status_files)]
+
+month_status_files[1]
+
+aug_files <- month_status_files
+```
+
+```{r function for sequential execution}
+raw_data_merge <- function(root_folder, sub_folder, output_file_path = NULL) {
+  start <- Sys.time()
+  full_path <- file.path(root_folder,sub_folder)
+  
+  month_status_files <- list.files(full_path, full.names = TRUE)
+  #filter only those files with minutes ending in 0 or 5
+  month_status_files <- month_status_files[grepl("-[0-5][05]-\\d{2}\\.json$", month_status_files)]
+  
+  month_df_raw <- bind_rows(lapply(month_status_files, json_to_df))
+  
+  if(!is.null(output_file_path)) {
+    # Save the merged data to a CSV file
+    write.csv(month_df_raw, file = output_file_path, row.names = FALSE)
+  } 
+    
+    end <- Sys.time()
+  duration <- round(difftime(end, start, units = "mins"), 2)
+  cat("Total Exeuction Time for Sequential Run: ", duration, "minutes.\n")
+  
+  return(month_df_raw)
+}
+
+```
+
+
+```{r function for parallel execution}
+library(parallel)
+
+raw_data_merge_parallel <- function(root_folder, sub_folder, output_file_path = NULL) {
+  start <- Sys.time()
+  full_path <- file.path(root_folder,sub_folder)
+  month_status_files <- list.files(full_path, full.names = TRUE)
+  #filter only those files with minutes ending in 0 or 5
+  month_status_files <- month_status_files[grepl("-[0-5][05]-\\d{2}\\.json$", month_status_files)]
+  
+  ##parallel setup
+  num_cores <- detectCores() - 1 #leave 1 core free
+  cl <- makeCluster(num_cores)
+  
+  clusterExport(cl, varlist = c("json_to_df"))
+  clusterEvalQ(cl, {library(jsonlite); library(dplyr); library(stringr)})
+  
+  #parallel execution
+  month_df_list <- parLapply(cl, month_status_files, json_to_df)
+  
+  stopCluster(cl)
+  
+  #merge results
+  month_df_raw <- bind_rows(month_df_list)
+  
+  if(!is.null(output_file_path)) {
+    # Save the merged data to a CSV file
+    write.csv(month_df_raw, file = output_file_path, row.names = FALSE)
+  } 
+    
+  end <- Sys.time()
+  duration <- round(difftime(end, start, units = "mins"), 2)
+  cat("Total Exeuction Time for Parallel Run: ", duration, "minutes.\n")
+  return(month_df_raw)
+}
+
+```
+
+```{r execution trials}
+mar_24_seq <- raw_data_merge(raw_data_root, "2024-03")
+mar_24_par <- raw_data_merge_parallel(raw_data_root, "2024-03")
+
+```
+

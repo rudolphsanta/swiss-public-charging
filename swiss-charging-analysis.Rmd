@@ -38,7 +38,7 @@ CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/Ch
                               ChargingFacility_power = "numeric"
                               ),
                             stringsAsFactors = TRUE
-) %>%
+)
   select(EvseID,ChargingStationId,Accessibility,GeoCoordinates,City,Country,PostalCode,Street,IsOpen24Hours,LastUpdate,DynamicInfoAvailable,DynamicPowerLevel,ChargingFacility_power,ChargingFacility_powertype) %>%
   separate(GeoCoordinates, into = c("latitude", "longitude"), sep = " ", convert = TRUE)
 
@@ -69,7 +69,13 @@ CH_EVSE_details_cleaned$latitude <- ifelse(
   CH_EVSE_details_cleaned$latitude,
   NA)
 
+CH_EVSE_details_cleaned
+```
+
+```{r}
 summary(CH_EVSE_details_cleaned)
+write.csv(CH_EVSE_details_cleaned, "M:/Rudolph/R-Projects/swiss-public-charging/charging_stations_cleaned_2025-07.csv")
+
 ```
 
 
@@ -153,6 +159,8 @@ CH_Cantons <- st_read("M:/Rudolph/0-Datasets/Switzerland/Swiss_admin_boundaries_
 #load Swiss District boundaries shapefile
 CH_Districts <- st_read("M:/Rudolph/0-Datasets/Switzerland/Swiss_admin_boundaries_shapefiles/swissBOUNDARIES3D_1_5_TLM_BEZIRKSGEBIET.shp")
 
+CH_Municipality <- st_read("M:/Rudolph/0-Datasets/Switzerland/Swiss_admin_boundaries_shapefiles/swissBOUNDARIES3D_1_5_TLM_HOHEITSGEBIET.shp")
+
 #convert charging data "CH_EVSE_details_short" into an sf format
 CH_EVSE_sf <- st_as_sf(CH_EVSE_details_short, coords = c("longitude", "latitude"), crs = 4326) %>%
   st_transform(., st_crs(CH_Cantons))
@@ -168,6 +176,14 @@ CH_EVSE_locations <- st_join(CH_EVSE_locations, CH_Districts %>% select(NAME), j
 CH_EVSE_df <- CH_EVSE_locations %>%
   st_drop_geometry()
 
+```
+
+```{r}
+Muni_list <- unique(CH_Municipality$NAME)
+
+CH_Territory[CH_Territory$NAME == "Baden", ]
+
+length(unique(CH_Districts$NAME))
 ```
 
 ```{r Total Swiss Charging Aggregated}

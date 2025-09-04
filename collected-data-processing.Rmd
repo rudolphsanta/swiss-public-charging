@@ -7,9 +7,10 @@ date: "2025-01-16"
 ```{r setup, include=FALSE}
 library(dplyr)
 library(tidyverse)
-```
 
-```{r functions}
+
+# Necessary combine function
+
 combine_status_files <- function(file_paths,output_file) {
    merged_data <- read.csv(file_paths[1], stringsAsFactors = TRUE)
   
@@ -130,4 +131,12 @@ jul_status_files <- list.files("P:/Rudolph/Datasets/EVSE-Status-Data", pattern =
 jul_output_file <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data/2025-07-charging.csv")
 
 combine_status_files(jul_status_files, jul_output_file)
+```
+
+```{r august files}
+aug_status_files <- list.files("P:/Rudolph/Datasets/EVSE-Status-Data", pattern = "^evse_statuses_2025-08", full.names = TRUE)
+
+aug_output_file <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data/2025-08-charging.csv")
+
+combine_status_files(aug_status_files, aug_output_file)
 ```

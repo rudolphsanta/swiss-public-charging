@@ -9,8 +9,11 @@ output: html_document
 library(pxR)
 library(dplyr)
 library(tidyverse)
+library(data.table)
 
 ```
+
+
 
 ```{r SANDBOX}
 # Load required package
@@ -20,10 +23,17 @@ library(jsonlite)
 json_data <- fromJSON("P:/Rudolph/Swiss-EVChg-Data/2024-09/data-2024-09-01-00-01-02.json")
 
 # Navigate to the nested data
-test_df <- json_data$EVSEStatuses[[1]]$EVSEStatusRecord
+test_df <- json_data$EVSEStatuses[[29]][[1]]
+num_operators <- length(json_data$EVSEStatuses)
+operator <-json_data$EVSEStatuses[[29]][[4]]
+
+A <- bind_rows(lapply(test_df, bind_rows))
+  
+dims(json_data$EVSEStatuses)
 
 # View the result
 head(test_df)
+head(json_data)
 ```
 
 
