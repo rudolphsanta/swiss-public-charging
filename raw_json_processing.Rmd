@@ -22,13 +22,24 @@ library(lubridate)
 ##All the raw data are collected and stored here
 raw_data_root <- file.path("P:/Rudolph/Swiss-EVChg-Data") #there are monthly folders in this directory
 
-output_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data")
+output_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data_Processed")
 
 ```
 
 ```{r functions for processing}
+safe_fromJSON <- function(path) {
+  tryCatch({
+    jsonlite::fromJSON(path)
+  }, error = function(e) {
+    warning("Failed to parse file: ", path, " — ", conditionMessage(e))
+    return(NULL)  # or return an empty data frame
+  })
+}
+
+
 json_to_df <- function(json_file_path) {
-  json_data <- fromJSON(json_file_path)
+  json_data <- safe_fromJSON(json_file_path)
+  if (is.null(json_data)) return(NULL)   # skip bad file
   
   #the timestamp from this file in YYYY-MM-DD-HH-MM format
   timestamp <- basename(json_file_path) %>%
@@ -149,7 +160,7 @@ raw_data_merge_parallel <- function(root_folder, sub_folder, output_file_path = 
   month_status_files <- month_status_files[grepl("-[0-5][05]-\\d{2}\\.json$", month_status_files)]
   
   ##parallel setup
-  num_cores <- detectCores() - 1 #leave 1 core free
+  num_cores <- detectCores() - 2 #leave 1 core free
   cl <- makeCluster(num_cores)
   
   clusterExport(cl, varlist = c("json_to_df"))
@@ -182,3 +193,35 @@ mar_24_par <- raw_data_merge_parallel(raw_data_root, "2024-03")
 
 ```
 
+```{r loop for creating csvs}
+first_month <- "2022-12"
+last_month <- format(seq(Sys.Date(), length = 2, by = "-1 month")[2], "%Y-%m") #automatically detects which month it is and gets the last full month.
+
+# Convert to Date objects (assume first of the month)
+first_date <- as.Date(paste0(first_month, "-01"))
+last_date  <- as.Date(paste0(last_month, "-01"))
+
+# Generate sequence by months
+month_seq <- seq(first_date, last_date, by = "month")
+
+# Convert back to "YYYY-MM"
+month_vec <- format(month_seq, "%Y-%m")
+
+for(month in month_vec) {
+  #generate the full filepath for the input and output.
+  output_name <- paste0(month,"_charging.csv")
+  output_path <- file.path(output_root,output_name)
+  #check if the file exists
+  if(file.exists(output_path)) {
+    cat(output_path," already exists.\n")
+    next
+  } else {
+    raw_data_merge_parallel(raw_data_root,month,output_path)
+  }
+    #if it does, next
+    #if it doesn't, make it
+}
+# mar_24_seq <- raw_data_merge(raw_data_root, "2024-03")
+# mar_24_par <- raw_data_merge_parallel(raw_data_root, "2024-03")
+
+```
