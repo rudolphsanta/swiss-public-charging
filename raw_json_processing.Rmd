@@ -6,6 +6,7 @@ output: html_document
 ---
 
 #This file converts collected raw data from public charging (.json files) into .csv files which can then be read into data tables.
+#The result will be to convert raw jsons into .csv files saved in a chosen directory that can be loaded later.
 
 ```{r setup, include=FALSE}
 library(dplyr)
@@ -163,7 +164,7 @@ raw_data_merge_parallel <- function(root_folder, sub_folder, output_file_path = 
   num_cores <- detectCores() - 2 #leave 1 core free
   cl <- makeCluster(num_cores)
   
-  clusterExport(cl, varlist = c("json_to_df"))
+  clusterExport(cl, varlist = c("json_to_df","safe_fromJSON"))
   clusterEvalQ(cl, {library(jsonlite); library(dplyr); library(stringr)})
   
   #parallel execution
@@ -192,6 +193,8 @@ mar_24_seq <- raw_data_merge(raw_data_root, "2024-03")
 mar_24_par <- raw_data_merge_parallel(raw_data_root, "2024-03")
 
 ```
+
+#This block can be run every month when all the jsons from the prior month are collected. No changes needed to the block, it automatically checks today's date and collects the block of the last full month IF it doesn't exist yet.
 
 ```{r loop for creating csvs}
 first_month <- "2022-12"
@@ -225,3 +228,51 @@ for(month in month_vec) {
 # mar_24_par <- raw_data_merge_parallel(raw_data_root, "2024-03")
 
 ```
+
+#.csv files now saved to the chosen output directory.
+
+```{r csv conversion to Parquet - If needed}
+library(arrow)
+library(tools)
+library(data.table)
+
+csv_to_parquet <- function(csv_file_paths, dest_folder) {
+  # Create destination folder if it doesn't exist
+  if (!dir.exists(dest_folder)) {
+    dir.create(dest_folder, recursive = TRUE)
+  }
+  
+  for (csv_path in csv_file_paths) {
+    # Build output Parquet path
+    file_base <- file_path_sans_ext(basename(csv_path))  # strip .csv
+    parquet_path <- file.path(dest_folder, paste0(file_base, ".parquet"))
+    
+    # Skip if Parquet file already exists
+    if (file.exists(parquet_path)) {
+      message("Skipping (already exists): ", parquet_path)
+      next
+    }
+    
+    # Read CSV robustly, filling missing columns with NA
+    dt <- fread(csv_path, fill = TRUE)
+    
+    # Write Parquet
+    arrow::write_parquet(dt, parquet_path)
+    
+    message("Converted: ", csv_path, " -> ", parquet_path)
+  }
+}
+
+```
+
+```{r}
+charging_data_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data_Processed")
+chg_avail_csvs <- list.files(charging_data_root,full.names = TRUE)
+
+output_parquet_path <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data_Parquet")
+
+
+csv_to_parquet(chg_avail_csvs, output_parquet_path)
+```
+
+#.parquet files now saved to the chosen output directory.
