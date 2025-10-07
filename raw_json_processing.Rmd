@@ -23,7 +23,7 @@ library(lubridate)
 ##All the raw data are collected and stored here
 raw_data_root <- file.path("P:/Rudolph/Swiss-EVChg-Data") #there are monthly folders in this directory
 
-output_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data_Processed")
+output_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data_CSV")
 
 ```
 
@@ -49,28 +49,30 @@ json_to_df <- function(json_file_path) {
     as.POSIXct(format = "%Y-%m-%d-%H-%M-%S", tz = "Europe/Zurich") 
   
   num_operators <- length(json_data$EVSEStatuses$EVSEStatusRecord)
+
+  #initialize empty dataframe
+  all_op_statuses_df <- data.frame()
   
-  #first time through
-  # op_df <- json_data$EVSEStatuses$EVSEStatusRecord[[1]]
-  # all_op_statuses_df <- bind_rows(lapply(op_df[[1]], function(x) {
-  #   tryCatch(bind_rows(x), error = function(e) NULL)}))
-  
-  all_op_statuses_df <- json_data$EVSEStatuses$EVSEStatusRecord[[1]]
   #all other operators
-  for(n in 2:num_operators) {
-    # op_df <- json_data$EVSEStatuses$EVSEStatusRecord[[n]]
-    # this_op_statuses_df <- bind_rows(lapply(op_df[[1]], function(x) {
-    #   tryCatch(bind_rows(x), error = function(e) NULL)}))
+  for(n in 1:num_operators) {
     this_op_statuses_df <- json_data$EVSEStatuses$EVSEStatusRecord[[n]]
+    # Skip if no records
+    if (is.null(this_op_statuses_df) || nrow(this_op_statuses_df) == 0) next
+    
+    this_op_statuses_df$OperatorID <- json_data$EVSEStatuses$OperatorID[[n]]
+    this_op_statuses_df$OperatorName <- json_data$EVSEStatuses$OperatorName[[n]]
+    
     all_op_statuses_df <- rbind(all_op_statuses_df, this_op_statuses_df)
   }
 
   all_op_statuses_df <- all_op_statuses_df %>%
-    mutate(datetime = timestamp,
-           full_datetime = format(timestamp, "%Y-%m-%d-%H-%M"),  # for viewing/export
-           EvseID = as.factor(EvseID),
-           EVSEStatus = as.factor(EVSEStatus)) %>%
-    select(datetime, full_datetime, everything())
+    transmute(datetime = timestamp, #
+              # full_datetime = format(timestamp, "%Y-%m-%d-%H-%M"),  # for viewing/export
+              EvseID = as.factor(EvseID),
+              EVSEStatus = as.factor(EVSEStatus),
+              OperatorID = as.factor(OperatorID),
+              OperatorName = as.factor(OperatorName)) %>%
+    select(datetime, everything())
   
   return(all_op_statuses_df)
 }
@@ -100,16 +102,23 @@ operator_dict <- function(json_file_path, existing_operator_dict = NULL) {
 ```{r SANDBOX}
 Z <- mar_json_data$EVSEStatuses$EVSEStatusRecord[[2]]
 undebug(json_to_df)
-A <- json_to_df(aug_files[1])
+system.time({
+  A <- json_to_df(aug_files[1])
+  B <- bind_rows(lapply(aug_files[1:3], json_to_df))
+  })
+unique(format(B$datetime, "%Y-%m-%d %H:%M"))
 
 mar_json_data <- fromJSON(mar_files[1])
 aug_json_data <- fromJSON(aug_files[1])
+aug_json_data2 <- safe_fromJSON(aug_files[1])
 
-
+aug_json_data$EVSEStatuses$OperatorID[[1]]
+aug_json_data$EVSEStatuses[[7]]$EVSEStatusRecord
+length(aug_json_data$EVSEStatuses)
 ```
 
 
-```{r process august 2025}
+```{r SANDBOX - process august 2025}
 sub_folder <- "2025-08"
 full_path <- file.path(raw_data_root, sub_folder)
 
@@ -139,8 +148,8 @@ raw_data_merge <- function(root_folder, sub_folder, output_file_path = NULL) {
     # Save the merged data to a CSV file
     write.csv(month_df_raw, file = output_file_path, row.names = FALSE)
   } 
-    
-    end <- Sys.time()
+  
+  end <- Sys.time()
   duration <- round(difftime(end, start, units = "mins"), 2)
   cat("Total Exeuction Time for Sequential Run: ", duration, "minutes.\n")
   
@@ -194,6 +203,22 @@ mar_24_par <- raw_data_merge_parallel(raw_data_root, "2024-03")
 
 ```
 
+```{r SANDBOX}
+sub_folder <- "2022-12"
+full_path <- file.path(raw_data_root, sub_folder)
+
+# Get list of all files
+month_status_files <- list.files(full_path, full.names = TRUE)
+
+# Optional: filter only files with minutes ending in 0 or 5
+month_status_files <- month_status_files[grepl("-[0-5][05]-\\d{2}\\.json$", month_status_files)]
+
+month_status_files[1]
+
+debug(json_to_df)
+dec_json <- json_to_df(month_status_files[1])
+```
+
 #This block can be run every month when all the jsons from the prior month are collected. No changes needed to the block, it automatically checks today's date and collects the block of the last full month IF it doesn't exist yet.
 
 ```{r loop for creating csvs}
@@ -224,10 +249,10 @@ for(month in month_vec) {
     #if it does, next
     #if it doesn't, make it
 }
-# mar_24_seq <- raw_data_merge(raw_data_root, "2024-03")
-# mar_24_par <- raw_data_merge_parallel(raw_data_root, "2024-03")
+
 
 ```
+
 
 #.csv files now saved to the chosen output directory.
 
@@ -266,7 +291,7 @@ csv_to_parquet <- function(csv_file_paths, dest_folder) {
 ```
 
 ```{r}
-charging_data_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data_Processed")
+charging_data_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data_CSV")
 chg_avail_csvs <- list.files(charging_data_root,full.names = TRUE)
 
 output_parquet_path <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data_Parquet")

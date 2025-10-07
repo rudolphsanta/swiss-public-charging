@@ -9,25 +9,22 @@ library(pxR)
 library(dplyr)
 library(tidyverse)
 library(csv)
+library(readr)
+library(data.table)
+library(arrow)
+library(data.table)  # optional for rbindlist if you prefer
+library(lubridate)
+library(parallel)
+
+# charging status file location and list
+charging_data_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data_Parquet")
+
+chg_avail_files <- list.files(charging_data_root,full.names = TRUE)
 
 ```
 
 
-```{r charging data folder location}
-monthly_chg_files <- "C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data"
-chunked_chg_files <- "C:/Users/santar_r/Documents/Rudolph_local/Datasets/Switzerland/Processed-data/EVSE_partial_step-1"
-```
-
-```{r charging point details - Prior to July 2025. Can DELETE}
-CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/EVSE_details_2024-10-04h.csv") %>%
-  mutate(Power_kW = as.integer(sub("^(\\d+).*", "\\1", ChargingFacilities)))
-
-CH_EVSE_details_short <- CH_EVSE_details %>%
-  select(EvseID, ChargingStationId, ChargingFacilities, Power_kW, Accessibility, City, GeoCoordinates) %>%
-  separate(GeoCoordinates, into = c("latitude", "longitude"), sep = " ", convert = TRUE)
-
-```
-
+##Charging point data
 ```{r Charging Point Details}
 CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/ChargingStationDetails_22-07-2025.csv",
                             colClasses = c(
@@ -38,54 +35,665 @@ CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/Ch
                               ChargingFacility_power = "numeric"
                               ),
                             stringsAsFactors = TRUE
-)
+) %>%
   select(EvseID,ChargingStationId,Accessibility,GeoCoordinates,City,Country,PostalCode,Street,IsOpen24Hours,LastUpdate,DynamicInfoAvailable,DynamicPowerLevel,ChargingFacility_power,ChargingFacility_powertype) %>%
   separate(GeoCoordinates, into = c("latitude", "longitude"), sep = " ", convert = TRUE)
 
 CH_EVSE_details$LastUpdate <- ymd_hms(CH_EVSE_details$LastUpdate, tz = "UTC")
 
-head(CH_EVSE_details)
-```
-
-
-```{r}
-summary(CH_EVSE_details)
-
-```
-
-```{r Cleaning the charger dataset}
-# CH_EVSE_details[CH_EVSE_details$longitude < 6, ]
-
-CH_EVSE_details_cleaned <- CH_EVSE_details
-
 #convert longitude and latitude to NA if they fall outside of the country extents
-CH_EVSE_details_cleaned$longitude <- ifelse(
-  CH_EVSE_details_cleaned$longitude >= 5.5 & CH_EVSE_details_cleaned$longitude <= 10.5,
-  CH_EVSE_details_cleaned$longitude,
+CH_EVSE_details$longitude <- ifelse(
+  CH_EVSE_details$longitude >= 5.5 & CH_EVSE_details$longitude <= 10.5,
+  CH_EVSE_details$longitude,
   NA)
 
-CH_EVSE_details_cleaned$latitude <- ifelse(
-  CH_EVSE_details_cleaned$latitude >= 45.5 & CH_EVSE_details_cleaned$latitude <= 47.9,
-  CH_EVSE_details_cleaned$latitude,
+CH_EVSE_details$latitude <- ifelse(
+  CH_EVSE_details$latitude >= 45.5 & CH_EVSE_details$latitude <= 47.9,
+  CH_EVSE_details$latitude,
   NA)
 
-CH_EVSE_details_cleaned
-```
+#remove any rows that are EXACT duplicates (duplicated across all columns)
+CH_EVSE_details <- CH_EVSE_details[!duplicated(CH_EVSE_details), ]
 
-```{r}
-summary(CH_EVSE_details_cleaned)
-write.csv(CH_EVSE_details_cleaned, "M:/Rudolph/R-Projects/swiss-public-charging/charging_stations_cleaned_2025-07.csv")
+summary(CH_EVSE_details)
+CH_EVSE_details
+
+#write.csv(CH_EVSE_details, "M:/Rudolph/R-Projects/swiss-public-charging/charging_stations_cleaned_2025-07.csv")
 
 ```
 
 
 ```{r summarise charging point dataset}
-hist(CH_EVSE_details_cleaned$ChargingFacility_power, xlab = "Charge Point Power [kW]", main = "")
+hist(CH_EVSE_details$ChargingFacility_power, xlab = "Charge Point Power [kW]", main = "")
 # boxplot(CH_EVSE_details_cleaned$ChargingFacility_power)
 ```
 
 
-```{r function to convert charging availability tables - monthly data}
+
+## Charging availability data
+
+```{r load and append ALL Parquet files into a df}
+#this gives a VERY LONG dataframe.
+load_charging_df <- function(files_to_load, existing_df = NULL) {
+  for(file in files_to_load) {
+    this_df <- arrow::read_parquet(file)
+    #check if the data are already in the working dataframe
+    if(!is.null(existing_df)) {
+      if(!exists("return_df")) return_df <- existing_df
+      check_datetime <- as.POSIXct(this_df$datetime[1], format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Zurich")
+      existing_df$datetime <- as.POSIXct(existing_df$datetime, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Zurich")
+      if(check_datetime %in% existing_df$datetime) next #If the date already exists in the existing dataframe, we do not need to load the same data again.
+    }
+    #reformat the columns and select only the ones wanted
+    this_df <- this_df %>%
+      transmute(datetime = as.POSIXct(datetime, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Zurich"),
+                EvseID = as.factor(EvseID),
+                EVSEStatus = as.factor(EVSEStatus),
+                OperatorID = as.factor(OperatorID),
+                OperatorName = as.factor(OpeartorName))
+    #append this to the existing dataframe if it already exists
+    if(!exists("return_df")) return_df <- this_df else return_df <- rbind(return_df, this_df)
+    
+    rm(this_df)
+  }
+  return(return_df)
+}
+
+load_charging_dt <- function(files_to_load, existing_dt = NULL) {
+  # Ensure existing_dt is a data.table
+  if (!is.null(existing_dt)) {
+    existing_dt <- as.data.table(existing_dt)[, .(
+      datetime = as.POSIXct(datetime, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Zurich"),
+      EvseID = as.factor(EvseID),
+      EVSEStatus = as.factor(EVSEStatus),
+      OperatorID = as.factor(OperatorID),
+      OperatorName = as.factor(OpeartorName)
+    )]
+  }
+  
+  dt_list <- list()
+  
+  for(file in files_to_load) {
+    this_dt <- as.data.table(arrow::read_parquet(file))[, .(
+      datetime = as.POSIXct(datetime, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Zurich"),
+      EvseID = as.factor(EvseID),
+      EVSEStatus = as.factor(EVSEStatus),
+      OperatorID = as.factor(OperatorID),
+      OperatorName = as.factor(OpeartorName)
+    )]
+    
+    #check if the data are already in the working dataframe
+    if(!is.null(existing_dt)) {
+      if (this_dt$datetime[1] %in% existing_dt$datetime) {
+        message("Skipping file (already loaded): ", file)
+        next
+    
+      }
+    }
+    dt_list[[length(dt_list) + 1]] <- this_dt
+  }
+
+  # Combine all new data.tables
+  if (length(dt_list) > 0) {
+    new_dt <- rbindlist(dt_list, use.names = TRUE, fill = TRUE)
+    # Combine with existing_dt if provided
+    if (!is.null(existing_dt)) {
+      return(rbindlist(list(existing_dt, new_dt), use.names = TRUE, fill = TRUE))
+      } else {
+        return(new_dt)
+        }
+    } else {
+      # No new files to add
+      return(existing_dt)
+      }
+  
+  }
+
+
+```
+
+```{r SANDBOX loading Parquet files}
+# undebug(load_charging_df)
+start <- Sys.time()
+# 
+# A <- load_charging_df(chg_avail_files[1:2])
+# df_time <- Sys.time()
+B <- load_charging_dt(chg_avail_files[1:5])
+dt_time <- Sys.time()
+
+# difftime(df_time, start, units = "mins")
+difftime(dt_time, start, units = "mins")
+
+# print(format(object.size(A),units = "GB"))
+print(format(object.size(B),units = "GB"))
+
+# summary(B)
+head(B)
+
+# A_clean <- A[A$EVSEStatus %in% c("Available","Occupied"), ]
+B_clean <- B[B$EVSEStatus %in% c("Available","Occupied"), ]
+print(format(object.size(B_clean),units = "GB"))
+# B_clean2 <- select(B_clean, datetime, EvseID, EVSEStatus)
+# print(format(object.size(B_clean),units = "GB"))
+# print(format(object.size(B_clean2),units = "GB"))
+
+# summary(B)
+# print(format(object.size(B_clean),units = "GB"))
+# print(format(object.size(B_clean2),units = "GB"))
+```
+
+```{r function for loading data}
+# Function to read and filter one file
+process_file <- function(file, IDs = NULL, status = c("Available","Occupied"), year = NULL, month = NULL, day = NULL, wday = NULL, hour = NULL, minute = NULL, existing_dt = NULL) {
+  dt <- as.data.table(arrow::read_parquet(file))
+
+  if (nrow(dt) == 0 || !"datetime" %in% names(dt)) return(NULL)
+
+  dt <- dt[, .(
+    datetime = as.POSIXct(datetime, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Zurich"),
+    EvseID = as.factor(EvseID),
+    EVSEStatus = as.factor(EVSEStatus)
+  )]
+  rows_start <- nrow(dt)
+
+  # Skip already loaded
+  if (!is.null(existing_dt) && dt$datetime[1] %in% existing_dt$datetime) return(NULL)
+
+  # Apply filters
+  if (!is.null(IDs))    dt <- dt[EvseID %in% IDs, ]
+  if (!is.null(status)) dt <- dt[EVSEStatus %in% status, ]
+  if (!is.null(year))   dt <- dt[year(datetime)   %in% year, ]
+  if (!is.null(month))  dt <- dt[month(datetime)  %in% month, ]
+  if (!is.null(day))    dt <- dt[mday(datetime)   %in% day, ]
+  if (!is.null(wday))   dt <- dt[lubridate::wday(datetime, week_start = 1) %in% wday, ]
+  if (!is.null(hour))   dt <- dt[hour(datetime)   %in% hour, ]
+  if (!is.null(minute)) dt <- dt[minute(datetime) %in% minute, ]
+  
+  rows_elim <- rows_start - nrow(dt)
+
+  # return(dt)
+  return(list(dt = dt, rows_elim = rows_elim))
+}
+
+#load and filter data to keep objects small, but together
+load_filter_charging_dt_parallel <- function(files_to_load, IDs = NULL, status = c("Available","Occupied"), year = NULL, month = NULL, day = NULL, wday = NULL, hour = NULL, minute = NULL, existing_dt = NULL, n_cores = 4) {
+  rows_elim <- 0
+  file_summaries <- list()
+  # Ensure existing_dt is a data.table
+  if (!is.null(existing_dt)) {
+    existing_dt <- as.data.table(existing_dt)[, .(
+      datetime = as.POSIXct(datetime, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Zurich"),
+      EvseID = as.factor(EvseID),
+      EVSEStatus = as.factor(EVSEStatus)
+      # OperatorID = as.factor(OperatorID),
+      # OperatorName = as.factor(OpeartorName)
+    )]
+    file_summaries[[length(file_summaries) + 1]] <- summary(this_dt)
+    #Apply the filters to keep the data usage lower
+    rows <- nrow(existing_dt)
+    if (!is.null(IDs))    existing_dt <- existing_dt[existing_dt$EvseID %in% IDs, ]
+    if (!is.null(status)) existing_dt <- existing_dt[existing_dt$EVSEStatus %in% status, ]
+    if (!is.null(year))   existing_dt <- existing_dt[year(datetime)   %in% year, ]
+    if (!is.null(month))  existing_dt <- existing_dt[month(datetime)  %in% month, ]
+    if (!is.null(day))    existing_dt <- existing_dt[day(datetime)   %in% day, ]
+    if (!is.null(wday))   existing_dt <- existing_dt[lubridate::wday(datetime, week_start = 1) %in% wday, ] #Monday = 1, Sunday = 7
+    if (!is.null(hour))   existing_dt <- existing_dt[hour(datetime)   %in% hour, ]
+    if (!is.null(minute)) existing_dt <- existing_dt[minute(datetime) %in% minute, ]
+    rows_elim <-  rows - nrow(existing_dt)
+  }
+  
+  
+    
+  # Create cluster
+  n_cores <- ifelse(n_cores <= 0, detectCores() + n_cores, n_cores) #if a negative number is entered, that is to be the number of cores UNUSED by this execution
+  cat("Executing on ",n_cores, " cores.\n")
+  cl <- makeCluster(n_cores)
+  clusterEvalQ(cl, {
+    library(data.table)
+    library(arrow)
+    library(lubridate)
+  })
+  clusterExport(cl, varlist = c("files_to_load","IDs","status","year","month",
+                                "day","wday","hour","minute","existing_dt"),
+                envir = environment())
+  
+  # Run in parallel
+  dt_list <- parLapply(cl, files_to_load, process_file,
+                       IDs = IDs, 
+                       status = status, 
+                       year = year, 
+                       month = month, 
+                       day = day, 
+                       wday = wday, 
+                       hour = hour, 
+                       minute = minute, 
+                       existing_dt = existing_dt)
+  stopCluster(cl)
+  
+  # Remove NULL results (skipped files)
+  dt_list <- Filter(Negate(is.null), dt_list)
+
+  # Combine all new data.tables
+  if (length(dt_list) > 0) {
+    # Extract dt objects and eliminated rows
+    all_dt    <- lapply(dt_list, `[[`, "dt")
+    rows_elim <- sum(sapply(dt_list, `[[`, "rows_elim"), na.rm = TRUE)
+    
+    cat("Rows eliminated from filters: ",rows_elim, "\n")
+    
+    # Combine all new data.tables
+    new_dt <- rbindlist(all_dt, use.names = TRUE, fill = TRUE)
+    
+    # Combine with existing_dt if provided
+    if (!is.null(existing_dt)) {
+      return(rbindlist(list(existing_dt, new_dt), use.names = TRUE, fill = TRUE))
+      } else {
+        return(new_dt)
+        }
+    } else {
+      # No new files to add
+      return(existing_dt)
+      }
+  
+  }
+
+```
+
+```{r Duplicate working function - no Parallelization}
+#load and filter data to keep objects small, but together
+load_filter_charging_dt <- function(files_to_load, IDs = NULL, status = c("Available","Occupied"), year = NULL, month = NULL, day = NULL, wday = NULL, hour = NULL, minute = NULL, existing_dt = NULL) {
+  rows_elim <- 0
+  file_summaries <- list()
+  # Ensure existing_dt is a data.table
+  if (!is.null(existing_dt)) {
+    existing_dt <- as.data.table(existing_dt)[, .(
+      datetime = as.POSIXct(datetime, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Zurich"),
+      EvseID = as.factor(EvseID),
+      EVSEStatus = as.factor(EVSEStatus)
+      # OperatorID = as.factor(OperatorID),
+      # OperatorName = as.factor(OpeartorName)
+    )]
+    file_summaries[[length(file_summaries) + 1]] <- summary(this_dt)
+    #Apply the filters to keep the data usage lower
+    rows <- nrow(existing_dt)
+    if (!is.null(IDs))    existing_dt <- existing_dt[existing_dt$EvseID %in% IDs, ]
+    if (!is.null(status)) existing_dt <- existing_dt[existing_dt$EVSEStatus %in% status, ]
+    if (!is.null(year))   existing_dt <- existing_dt[year(datetime)   %in% year, ]
+    if (!is.null(month))  existing_dt <- existing_dt[month(datetime)  %in% month, ]
+    if (!is.null(day))    existing_dt <- existing_dt[mday(datetime)   %in% day, ]
+    if (!is.null(wday))   existing_dt <- existing_dt[lubridate::wday(datetime, week_start = 1) %in% wday, ] #Monday = 1, Sunday = 7
+    if (!is.null(hour))   existing_dt <- existing_dt[hour(datetime)   %in% hour, ]
+    if (!is.null(minute)) existing_dt <- existing_dt[minute(datetime) %in% minute, ]
+    rows_elim <-  rows - nrow(existing_dt)
+  }
+  
+  dt_list <- list()
+  
+  for(file in files_to_load) {
+    this_dt <- as.data.table(arrow::read_parquet(file))
+
+    # Skip empty files or files without the required column
+    if (nrow(this_dt) == 0 || !"datetime" %in% names(this_dt)) {
+      message("Skipping file (empty or missing 'datetime'): ", file)
+      next
+    }
+    
+    # Now safely transform the columns
+    this_dt <- this_dt[, .(
+      datetime = as.POSIXct(datetime, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Zurich"),
+      EvseID = as.factor(EvseID),
+      EVSEStatus = as.factor(EVSEStatus)
+    )]
+    #check if the data are already in the working dataframe
+    if(!is.null(existing_dt)) {
+      if (this_dt$datetime[1] %in% existing_dt$datetime) {
+        message("Skipping file (already loaded): ", file)
+        next
+    
+      }
+    }
+    #Apply the filters to keep the data usage lower
+    rows <- nrow(this_dt)
+    if (!is.null(IDs))    this_dt <- this_dt[this_dt$EvseID %in% IDs, ]
+    if (!is.null(status)) this_dt <- this_dt[this_dt$EVSEStatus %in% status, ]
+    if (!is.null(year))   this_dt <- this_dt[year(datetime)   %in% year, ]
+    if (!is.null(month))  this_dt <- this_dt[month(datetime)  %in% month, ]
+    if (!is.null(day))    this_dt <- this_dt[mday(datetime)   %in% day, ]
+    if (!is.null(wday))   this_dt <- this_dt[lubridate::wday(datetime, week_start = 1) %in% wday, ] #Monday = 1, Sunday = 7
+    if (!is.null(hour))   this_dt <- this_dt[hour(datetime)   %in% hour, ]
+    if (!is.null(minute)) this_dt <- this_dt[minute(datetime) %in% minute, ]
+    rows_elim <- rows_elim + (rows - nrow(this_dt))  #total number of rows that have been eliminated by the filters.
+    
+    #Add it to the running list of new dts that should be merged
+    dt_list[[length(dt_list) + 1]] <- this_dt
+  }
+  
+  cat("Rows eliminated from filters: ",rows_elim, "\n")
+
+  # Combine all new data.tables
+  if (length(dt_list) > 0) {
+    new_dt <- rbindlist(dt_list, use.names = TRUE, fill = TRUE)
+    # Combine with existing_dt if provided
+    if (!is.null(existing_dt)) {
+      return(rbindlist(list(existing_dt, new_dt), use.names = TRUE, fill = TRUE))
+      } else {
+        return(new_dt)
+        }
+    } else {
+      # No new files to add
+      return(existing_dt)
+      }
+  
+  }
+```
+
+
+
+```{r filter EVSE}
+EVSE_filter <- function(EVSE_df, Latitude = NULL, Longitude = NULL, City = NULL, Country = NULL, PostalCode = NULL, Power = NULL, Powertype = NULL) {
+  #Apply the filters to keep the data usage lower
+  rows <- nrow(EVSE_df)
+  if (!is.null(Latitude))   EVSE_df <- EVSE_df[EVSE_df$latitude %in% Latitude, ]
+  if (!is.null(Longitude))  EVSE_df <- EVSE_df[EVSE_df$longitude %in% Longitude, ]
+  if (!is.null(City))       EVSE_df <- EVSE_df[EVSE_df$City %in% City, ]
+  if (!is.null(Country))    EVSE_df <- EVSE_df[EVSE_df$Country %in% Country, ]
+  if (!is.null(PostalCode)) EVSE_df <- EVSE_df[EVSE_df$PostalCode %in% PostalCode, ]
+  if (!is.null(Power))      EVSE_df <- EVSE_df[EVSE_df$ChargingFacility_power %in% Power, ]
+  if (!is.null(Powertype))  EVSE_df <- EVSE_df[EVSE_df$ChargingFacility_powertype %in% Powertype, ]
+  rows_elim <- rows_elim + (rows - nrow(EVSE_df))  #total number of rows that have been eliminated by the filters.
+  
+  cat("Rows eliminated from filters: ",rows_elim, "\n")
+  return(EVSE_df)
+}
+
+```
+
+
+```{r create a single charging object in R - trial}
+system.time({
+  # summary(mid_power_EVSE)
+
+
+  mid_power_EVSE <- CH_EVSE_details[!is.na(CH_EVSE_details$ChargingFacility_power) &
+                                    CH_EVSE_details$ChargingFacility_power >= 22 &
+                                    CH_EVSE_details$ChargingFacility_power < 50, ]
+  rm(chg_dt_full)
+  filter_IDs <- unique(mid_power_EVSE$EvseID)
+  # undebug(load_filter_charging_dt_parallel)
+  chg_dt_full <- load_filter_charging_dt_parallel(chg_avail_files,
+                                                 IDs = filter_IDs,
+                                                 year = NULL, 
+                                                 month = c(5,6,7), #summer 
+                                                 day = NULL, 
+                                                 wday = c(1,2,3,4,5), #weekday 
+                                                 hour = NULL, 
+                                                 minute = NULL, 
+                                                 existing_dt = NULL,
+                                                 n_cores = 8)
+})
+print(format(object.size(chg_dt_full),units = "GB"))
+```
+
+
+```{r SANDBOX}
+head(chg_dt_full)
+summary(chg_dt_full)
+```
+
+## Utilization rate of charge poitns (EVSE IDs)
+```{r function to get the utilization rate of each collected timestamp}
+utilization_rate <- function(dt_input, IDs = NULL, year = NULL, month = NULL, day = NULL, wday = NULL, hour = NULL, minute = NULL) { 
+  '
+  Input: Takes the dt object from function "load_filter_charging_dt()" as the input
+  Operation: Applied additional filters based on what could be wanted, calulates the proportion of occupied charge points among those available among the charging points desired for the timeframe desired
+  Output: a single value as the proportion of occupied vs occupied + available for all the rows in the input dt.
+  '
+  if (!is.null(IDs))    dt_input <- dt_input[dt_input$EvseID %in% IDs, ]
+  if (!is.null(year))   dt_input <- dt_input[year(datetime)   %in% year, ]
+  if (!is.null(month))  dt_input <- dt_input[month(datetime)  %in% month, ]
+  if (!is.null(day))    dt_input <- dt_input[day(datetime)   %in% day, ]
+  if (!is.null(wday))   dt_input <- dt_input[lubridate::wday(datetime, week_start = 1) %in% wday, ] #Monday = 1, Sunday = 7
+  if (!is.null(hour))   dt_input <- dt_input[hour(datetime)   %in% hour, ]
+  if (!is.null(minute)) dt_input <- dt_input[minute(datetime) %in% minute, ]
+  
+  percent_occupied <- mean(dt_input$EVSEStatus == "Occupied")
+  
+  return(percent_occupied)
+  
+}
+
+```
+
+```{r SANDBOX}
+system.time({
+  utilization_rate(chg_dt_full, hour = 1)
+})
+
+head(unique(chg_dt_full$datetime))
+
+summary_dt <- chg_dt_full[ , .(prop_occupied = mean(EVSEStatus == "Occupied")), by = datetime]
+
+summary(summary_dt)
+```
+#Functions for computing utilization rate statistics (hourly distributions for the days given)
+```{r direct computation of all data}
+#compute the utilization rate stats for one vector.
+compute_stats <- function(x) {
+  # Ensure input is numeric
+  x <- as.numeric(x)
+  
+  # Compute summary statistics
+  min_prop    <- min(x, na.rm = TRUE)
+  q1_prop     <- quantile(x, 0.25, na.rm = TRUE)
+  median_prop <- median(x, na.rm = TRUE)
+  mean_prop   <- mean(x, na.rm = TRUE)
+  q3_prop     <- quantile(x, 0.75, na.rm = TRUE)
+  max_prop    <- max(x, na.rm = TRUE)
+  sd_prop     <- sd(x, na.rm = TRUE)
+  
+  # 95% CI using standard formula (mean ± 1.96*sd/sqrt(n))
+  n <- sum(!is.na(x))
+  ci95_low  <- mean_prop - 1.96 * sd_prop / sqrt(n)
+  ci95_high <- mean_prop + 1.96 * sd_prop / sqrt(n)
+  
+  # Return as named list
+  return(list(
+    min_prop    = min_prop,
+    q1_prop     = q1_prop,
+    median_prop = median_prop,
+    mean_prop   = mean_prop,
+    q3_prop     = q3_prop,
+    max_prop    = max_prop,
+    sd_prop     = sd_prop,
+    ci95_low    = ci95_low,
+    ci95_high   = ci95_high
+  ))
+}
+```
+
+
+```{r Bootstrapped from hourly observations}
+# Function to compute percentile-based CI for the mean
+compute_percentile_CI <- function(x, n_boot) {
+  boot_means <- replicate(n_boot, mean(sample(x, replace = TRUE)))
+  ci <- quantile(boot_means, probs = c(0.025, 0.975), na.rm = TRUE)
+  return(ci)
+}
+  
+##Using bootstrapping
+bootstrapped_hourly_summary <- function(dt, n_boot = 1000, seed = 123) {
+  set.seed(seed)
+  
+  # # Ensure input is a data.table
+  # dt <- as.data.table(dt)
+  
+  # Extract hour from datetime
+  dt[, hour := as.integer(format(datetime, "%H"))]
+  
+  # Bootstrapped summary by hour
+  result <- dt[, {
+    # Bootstrap: sample prop_occupied with replacement n_boot times
+    boot_stats <- replicate(n_boot, unlist(compute_stats(sample(prop_occupied, replace = TRUE))))
+    
+    # Average statistics across bootstrap samples
+    stats_mean <- rowMeans(boot_stats)
+    
+    # Percentile-based 95% CI for the mean of prop_occupied
+    ci95 <- compute_percentile_CI(prop_occupied, n_boot)
+    
+    # Combine results
+    stats_mean["ci95_low"]  <- ci95[1]
+    stats_mean["ci95_high"] <- ci95[2]
+    
+    as.list(stats_mean)
+  }, by = hour]
+  
+  # Sort by hour
+  setorder(result, hour)
+  
+  return(result)
+}
+```
+
+
+```{r Aggregated means for each hour of the day (N = number of days in the input dt)}
+#Aggregating single hour observation across days
+daily_hourly_summary <- function(dt) {
+  # # Expect dt to have: datetime (POSIXct) and prop_occupied (numeric)
+  # dt <- as.data.table(dt)
+  
+  # Extract date and hour from POSIX datetime
+  dt[, `:=`(
+    date = as.Date(datetime),
+    hour = as.integer(format(datetime, "%H"))
+  )]
+  
+  # Compute daily mean utilization for each hour
+  daily_hour <- dt[, .(daily_mean = mean(prop_occupied, na.rm = TRUE)),
+                   by = .(date, hour)]
+  
+  # Compute summary statistics across days for each hour
+  summary_by_hour <- daily_hour[, .(
+    n_days    = .N,
+    min_prop       = min(daily_mean, na.rm = TRUE),
+    q1_prop       = quantile(daily_mean, 0.25, na.rm = TRUE),
+    median_prop    = median(daily_mean, na.rm = TRUE),
+    mean_prop      = mean(daily_mean, na.rm = TRUE),
+    q3_prop       = quantile(daily_mean, 0.75, na.rm = TRUE),
+    max_prop       = max(daily_mean, na.rm = TRUE),
+    sd_prop        = sd(daily_mean, na.rm = TRUE),
+    ci95_low    = {
+      m <- mean(daily_mean, na.rm = TRUE)
+      s <- sd(daily_mean, na.rm = TRUE)
+      n <- .N
+      m - 1.96 * s / sqrt(n)
+    },
+    ci95_high   = {
+      m <- mean(daily_mean, na.rm = TRUE)
+      s <- sd(daily_mean, na.rm = TRUE)
+      n <- .N
+      m + 1.96 * s / sqrt(n)
+    }
+  ), by = hour]
+  
+  setorder(summary_by_hour, hour)
+  return(summary_by_hour)
+}
+```
+
+
+```{r Hierarchal (cluster) boostrapping. Resampling is done from days, not individual 5-minute observations}
+
+hierarchical_hourly_bootstrap <- function(dt, n_boot = NULL, seed = 123) {
+  set.seed(seed)
+  dt <- as.data.table(dt)
+  
+  # Extract date and hour
+  dt[, `:=`(
+    date = as.Date(datetime),
+    hour = as.integer(format(datetime, "%H"))
+  )]
+  
+  # Compute daily means by hour (one per day-hour)
+  daily_hour <- dt[, .(daily_mean = mean(prop_occupied, na.rm = TRUE)),
+                   by = .(date, hour)]
+  
+  # Prepare list of daily mean vectors per hour
+  hour_list <- split(daily_hour, by = "hour", keep.by = FALSE)
+  
+  # choose n_boot to be equal to the size of the original sample if not given
+  n_days <- uniqueN(daily_hour$date)
+  if(is.null(n_boot)) n_boot <- n_days
+
+  # Hierarchical bootstrapped summary by hour
+  result <- daily_hour[, {
+    days <- unique(date)
+    n_days <- length(days)
+    current_hour <- unique(hour)
+    
+    # Hierarchical bootstrap. Sampled over days.
+    boot_stats <- replicate(n_boot, {
+      sampled_days <- sample(days, size = n_days, replace = TRUE)
+      sampled_data <- daily_hour[date %in% sampled_days & hour %in% current_hour]
+      unlist(compute_stats(sampled_data$daily_mean))
+    })
+    
+    # Average statistics across bootstrap samples
+    stats_mean <- rowMeans(boot_stats, na.rm = TRUE)
+    
+    # Percentile-based CI
+    ci95 <- compute_percentile_CI(daily_mean[hour == current_hour], n_boot)
+    stats_mean["ci95_low"]  <- ci95[1]
+    stats_mean["ci95_high"] <- ci95[2]
+    
+    as.list(stats_mean)
+  }, by = hour]
+  
+  # Sort by hour
+  setorder(result, hour)
+  
+  return(result)
+}
+```
+
+```{r comparing the resulting summary statistics for the hourly utilization rates}
+summary_dt <- chg_dt_full[ , .(prop_occupied = mean(EVSEStatus == "Occupied")), by = datetime]
+summary_dt <- summary_dt[, hour := as.integer(format(datetime, "%H"))]
+
+system.time({
+  hourly_summary <- summary_dt[, compute_stats(prop_occupied), by = hour]
+})
+
+system.time({
+  hourly_summary_boot <- bootstrapped_hourly_summary(summary_dt, n_boot = 1000)
+})
+
+system.time({
+  hourly_summary_agg <- daily_hourly_summary(summary_dt)
+})
+
+system.time({
+  hourly_summary_hboot <- hierarchical_hourly_bootstrap(summary_dt)
+})
+
+hourly_compare <- hourly_summary_hboot - hourly_summary_boot
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r function to convert charging availability tables - monthly data - DELETE}
 
 EVSE_processing <- function(csv_file, merged_object = NULL, id_col = "EvseID") { #file path as a string input
   # Read the csv file into a dataframe object
@@ -105,7 +713,7 @@ EVSE_processing <- function(csv_file, merged_object = NULL, id_col = "EvseID") {
 
 ```
 
-```{r function to cycle through files in a folder - monthly data}
+```{r function to cycle through files in a folder - monthly data - DELETE}
 read_csvs <- function(main_dir = monthly_chg_files, start_f = 1, n_files = 'All') {
   # Get list of sub-directories in the main directory
   # subdirs <- list.dirs(main_dir, full.names = TRUE, recursive = FALSE)
@@ -309,7 +917,7 @@ write.csv(Full_EVSE_df, "M:/Rudolph/0-Datasets/Switzerland/Charging_point_IDs.cs
 ```
 
 
-
+## Utilization rate of charge poitns (EVSE IDs)
 ```{r function to get the utilization rate of each collected timestamp}
 availability_summary <- function(df_input) { #takes the df object from function "read_csvs()" as the input
   # df_util <- data.frame(timestamp = NA, year = NA, month = NA, day = NA, weekday = NA, hour = NA, minute = NA, occupied = NA, available = NA, unknown = NA, service = NA, NA_ = NA, total = NA, utilization = NA)
@@ -371,6 +979,7 @@ EVSE_util.1.winter <- EVSE_util.1 %>%
 
 summary(EVSE_util.1$month)
 ```
+
 ```{r segment by power level - NOT USED YET}
 # summary(EVSE_df$Power_kW)
 EVSE_lowP <- EVSE_df %>%
