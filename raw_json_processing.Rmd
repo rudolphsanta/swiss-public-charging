@@ -42,11 +42,13 @@ json_to_df <- function(json_file_path) {
   json_data <- safe_fromJSON(json_file_path)
   if (is.null(json_data)) return(NULL)   # skip bad file
   
-  #the timestamp from this file in YYYY-MM-DD-HH-MM format
-  timestamp <- basename(json_file_path) %>%
+  # raw timestamp
+  timestamp_raw <- basename(json_file_path) %>%
     str_remove("data-") %>%
     str_remove(".json") %>%
-    as.POSIXct(format = "%Y-%m-%d-%H-%M-%S", tz = "Europe/Zurich") 
+    as.POSIXct(format = "%Y-%m-%d-%H-%M-%S", tz = "Europe/Zurich")
+  
+  timestamp_rounded <- lubridate::round_date(timestamp_raw, unit = "5 minutes")
   
   num_operators <- length(json_data$EVSEStatuses$EVSEStatusRecord)
 
@@ -66,7 +68,7 @@ json_to_df <- function(json_file_path) {
   }
 
   all_op_statuses_df <- all_op_statuses_df %>%
-    transmute(datetime = timestamp, #
+    transmute(datetime = timestamp_rounded, #force the column into the expected timestamp
               # full_datetime = format(timestamp, "%Y-%m-%d-%H-%M"),  # for viewing/export
               EvseID = as.factor(EvseID),
               EVSEStatus = as.factor(EVSEStatus),
@@ -99,39 +101,6 @@ operator_dict <- function(json_file_path, existing_operator_dict = NULL) {
 }
 ```
 
-```{r SANDBOX}
-Z <- mar_json_data$EVSEStatuses$EVSEStatusRecord[[2]]
-undebug(json_to_df)
-system.time({
-  A <- json_to_df(aug_files[1])
-  B <- bind_rows(lapply(aug_files[1:3], json_to_df))
-  })
-unique(format(B$datetime, "%Y-%m-%d %H:%M"))
-
-mar_json_data <- fromJSON(mar_files[1])
-aug_json_data <- fromJSON(aug_files[1])
-aug_json_data2 <- safe_fromJSON(aug_files[1])
-
-aug_json_data$EVSEStatuses$OperatorID[[1]]
-aug_json_data$EVSEStatuses[[7]]$EVSEStatusRecord
-length(aug_json_data$EVSEStatuses)
-```
-
-
-```{r SANDBOX - process august 2025}
-sub_folder <- "2025-08"
-full_path <- file.path(raw_data_root, sub_folder)
-
-# Get list of all files
-month_status_files <- list.files(full_path, full.names = TRUE)
-
-# Optional: filter only files with minutes ending in 0 or 5
-month_status_files <- month_status_files[grepl("-[0-5][05]-\\d{2}\\.json$", month_status_files)]
-
-month_status_files[1]
-
-aug_files <- month_status_files
-```
 
 ```{r function for sequential execution}
 raw_data_merge <- function(root_folder, sub_folder, output_file_path = NULL) {
@@ -165,19 +134,58 @@ library(parallel)
 raw_data_merge_parallel <- function(root_folder, sub_folder, output_file_path = NULL) {
   start <- Sys.time()
   full_path <- file.path(root_folder,sub_folder)
-  month_status_files <- list.files(full_path, full.names = TRUE)
-  #filter only those files with minutes ending in 0 or 5
-  month_status_files <- month_status_files[grepl("-[0-5][05]-\\d{2}\\.json$", month_status_files)]
+
+  month_status_files <- list.files(full_path, full.names = TRUE, pattern = "\\.json$")
+  
+  timestamps <- str_extract(month_status_files, "\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2}")
+  datetimes <- as.POSIXct(timestamps, format = "%Y-%m-%d-%H-%M-%S", tz = "Europe/Zurich")
+  
+  month_start <- floor_date(min(datetimes), "month")
+  month_end <- ceiling_date(max(datetimes), "month") - minutes(5)
+  expected_times <- seq(from = month_start, to = month_end, by = "5 min")
+  
+  find_nearest <- function(target, available) {
+    diffs <- abs(difftime(available, target, units = "secs"))
+    available[which.min(diffs)]
+  }
+  
+  matched_times <- sapply(expected_times, find_nearest, available = datetimes)
+  diff_secs <- as.numeric(difftime(matched_times, expected_times, units = "secs"))
+  
+  # Only show problematic (non-exact) intervals
+  diagnostic_log <- data.frame(
+    expected_time = expected_times,
+    matched_time = matched_times,
+    time_diff_secs = diff_secs,
+    matched_file = month_status_files[match(matched_times, datetimes)],
+    stringsAsFactors = FALSE
+  ) %>%
+    filter(abs(time_diff_secs) > 2) %>%
+    arrange(expected_time)
+  
+  if (any(abs(diff_secs) > 150)) {
+    warning("Some expected 5-min intervals have no close match (>2.5 min difference).")
+  }
+  
+  corrected_files <- month_status_files[match(matched_times, datetimes)]
+  override_times <- expected_times
   
   ##parallel setup
-  num_cores <- detectCores() - 2 #leave 1 core free
+  num_cores <- detectCores() - 2 #leave some cores free
   cl <- makeCluster(num_cores)
   
   clusterExport(cl, varlist = c("json_to_df","safe_fromJSON"))
-  clusterEvalQ(cl, {library(jsonlite); library(dplyr); library(stringr)})
+  clusterEvalQ(cl, {library(jsonlite); library(dplyr); library(stringr); library(lubridate)})
   
   #parallel execution
   month_df_list <- parLapply(cl, month_status_files, json_to_df)
+  
+  # parallel map with both file path and override timestamp
+  # month_df_list <- parLapply(
+  #   cl,
+  #   seq_along(corrected_files),
+  #   function(i) json_to_df(corrected_files[i], override_time = override_times[i])
+  # )
   
   stopCluster(cl)
   
@@ -192,19 +200,26 @@ raw_data_merge_parallel <- function(root_folder, sub_folder, output_file_path = 
   end <- Sys.time()
   duration <- round(difftime(end, start, units = "mins"), 2)
   cat("Total Exeuction Time for Parallel Run: ", duration, "minutes.\n")
-  return(month_df_raw)
+  return(list(
+    data = month_df_raw,
+    diagnostics = diagnostic_log
+  ))
 }
 
 ```
 
 ```{r execution trials}
 mar_24_seq <- raw_data_merge(raw_data_root, "2024-03")
-mar_24_par <- raw_data_merge_parallel(raw_data_root, "2024-03")
+
+undebug(raw_data_merge_parallel)
+sep_25_par <- raw_data_merge_parallel(raw_data_root, "2025-09")
+
+summary(sep_25_par$diagnostics)
 
 ```
 
 ```{r SANDBOX}
-sub_folder <- "2022-12"
+sub_folder <- "2025-09"
 full_path <- file.path(raw_data_root, sub_folder)
 
 # Get list of all files
@@ -237,17 +252,23 @@ month_vec <- format(month_seq, "%Y-%m")
 
 for(month in month_vec) {
   #generate the full filepath for the input and output.
-  output_name <- paste0(month,"_charging.csv")
+  prefix <- paste0(month,"_charging")
+  output_name <- paste0(prefix, ".csv")
   output_path <- file.path(output_root,output_name)
+  
+  # Get all files in the output directory
+  existing_files <- list.files(output_root, full.names = FALSE)
+
   #check if the file exists
-  if(file.exists(output_path)) {
-    cat(output_path," already exists.\n")
+  if(any(startsWith(existing_files, prefix))) {
+    cat("Skipping", month, "- found existing file(s):",
+        paste(existing_files[startsWith(existing_files, prefix)], collapse = ", "), "\n")
     next
-  } else {
-    raw_data_merge_parallel(raw_data_root,month,output_path)
-  }
-    #if it does, next
-    #if it doesn't, make it
+
+  } 
+    
+  raw_data_merge_parallel(raw_data_root,month,output_path)
+ 
 }
 
 
