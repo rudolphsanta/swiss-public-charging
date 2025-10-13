@@ -417,7 +417,7 @@ system.time({
   mid_power_EVSE <- CH_EVSE_details[!is.na(CH_EVSE_details$ChargingFacility_power) &
                                     CH_EVSE_details$ChargingFacility_power >= 22 &
                                     CH_EVSE_details$ChargingFacility_power < 50, ]
-  rm(chg_dt_full)
+  # rm(chg_dt_full)
   filter_IDs <- unique(mid_power_EVSE$EvseID)
   # undebug(load_filter_charging_dt_parallel)
   chg_dt_full <- load_filter_charging_dt_parallel(chg_avail_files,
@@ -435,9 +435,23 @@ print(format(object.size(chg_dt_full),units = "GB"))
 ```
 
 
-```{r SANDBOX}
-head(chg_dt_full)
-summary(chg_dt_full)
+```{r create a single charging object in R - trial}
+system.time({
+  # summary(mid_power_EVSE)
+
+
+  # mid_power_EVSE <- CH_EVSE_details[!is.na(CH_EVSE_details$ChargingFacility_power) &
+  #                                   CH_EVSE_details$ChargingFacility_power >= 22 &
+  #                                   CH_EVSE_details$ChargingFacility_power < 50, ]
+  # rm(chg_dt_full)
+  # filter_IDs <- unique(mid_power_EVSE$EvseID)
+  # undebug(load_filter_charging_dt_parallel)
+  chg_dt_Rows <- load_filter_charging_dt_parallel(chg_avail_files[1],
+                                                  status = NULL,
+                                                  year = NULL,
+                                                  n_cores = 8)
+})
+summary(chg_dt_Rows)
 ```
 
 ## Utilization rate of charge poitns (EVSE IDs)
@@ -601,6 +615,52 @@ daily_hourly_summary <- function(dt) {
 }
 ```
 
+```{r Take maximum value as the hourly value when aggregating across days}
+#Aggregating single hour observation across days
+daily_hourly_summary_max <- function(dt) {
+  # # Expect dt to have: datetime (POSIXct) and prop_occupied (numeric)
+  # dt <- as.data.table(dt)
+  
+  # Extract date and hour from POSIX datetime
+  dt[, `:=`(
+    date = as.Date(datetime),
+    hour = as.integer(format(datetime, "%H"))
+  )]
+  
+  # Compute daily max utilization for each hour
+  daily_hour <- dt[, .(daily_max = max(prop_occupied, na.rm = TRUE)),
+                   by = .(date, hour)]
+  
+  # Compute summary statistics across days for each hour
+  summary_by_hour <- daily_hour[, .(
+    n_days    = .N,
+    min_prop       = min(daily_max, na.rm = TRUE),
+    q1_prop       = quantile(daily_max, 0.25, na.rm = TRUE),
+    median_prop    = median(daily_max, na.rm = TRUE),
+    mean_prop      = mean(daily_max, na.rm = TRUE),
+    q3_prop       = quantile(daily_max, 0.75, na.rm = TRUE),
+    max_prop       = max(daily_max, na.rm = TRUE),
+    sd_prop        = sd(daily_max, na.rm = TRUE),
+    ci95_low    = {
+      m <- mean(daily_max, na.rm = TRUE)
+      s <- sd(daily_max, na.rm = TRUE)
+      n <- .N
+      m - 1.96 * s / sqrt(n)
+    },
+    ci95_high   = {
+      m <- mean(daily_max, na.rm = TRUE)
+      s <- sd(daily_max, na.rm = TRUE)
+      n <- .N
+      m + 1.96 * s / sqrt(n)
+    }
+  ), by = hour]
+  
+  setorder(summary_by_hour, hour)
+  return(summary_by_hour)
+}
+```
+
+
 
 ```{r Hierarchal (cluster) boostrapping. Resampling is done from days, not individual 5-minute observations}
 
@@ -673,15 +733,115 @@ system.time({
 })
 
 system.time({
+  hourly_summary_agg_max <- daily_hourly_summary_max(summary_dt)
+})
+
+system.time({
   hourly_summary_hboot <- hierarchical_hourly_bootstrap(summary_dt)
 })
 
-hourly_compare <- hourly_summary_hboot - hourly_summary_boot
+hourly_compare <- hourly_summary_agg_max - hourly_summary_agg
 
 ```
 
 
+```{r visualize a utilization curve}
+utilization_visual <- function(dt_util,
+                               min = TRUE,
+                               max = TRUE,
+                               mean = TRUE,
+                               ci95_low = TRUE,
+                               ci95_high = TRUE,
+                               q1 = FALSE,
+                               median = FALSE,
+                               q3 = FALSE,
+                               sd = FALSE,
+                               line = TRUE,
+                               title = "Hourly Utilization Distribution") {
+  # --- Defensive checks ---
+  if (!"hour" %in% names(dt_util)) stop("Data must have an 'hour' column.")
+  
+  # Ensure hour is ordered (0–23)
+  dt_util <- dt_util %>% arrange(hour)
+  
+  # --- Reshape data to long form for flexible plotting ---
+  df_long <- dt_util %>%
+    pivot_longer(
+      cols = c("min_prop", "q1_prop", "median_prop", "mean_prop", "q3_prop",
+               "max_prop", "sd_prop", "ci95_low", "ci95_high"),
+      names_to = "metric",
+      values_to = "value",
+      values_drop_na = TRUE
+    )
+  
+  # --- Determine which metrics to include ---
+  metrics_to_show <- c()
+  if (min)        metrics_to_show <- c(metrics_to_show, "min_prop")
+  if (max)        metrics_to_show <- c(metrics_to_show, "max_prop")
+  if (mean)       metrics_to_show <- c(metrics_to_show, "mean_prop")
+  if (ci95_low)   metrics_to_show <- c(metrics_to_show, "ci95_low")
+  if (ci95_high)  metrics_to_show <- c(metrics_to_show, "ci95_high")
+  if (q1)         metrics_to_show <- c(metrics_to_show, "q1_prop")
+  if (median)     metrics_to_show <- c(metrics_to_show, "median_prop")
+  if (q3)         metrics_to_show <- c(metrics_to_show, "q3_prop")
+  if (sd)         metrics_to_show <- c(metrics_to_show, "sd_prop")
+  
+  df_long <- df_long %>% filter(metric %in% metrics_to_show)
+  
+  # --- Plotting ---
+  if (line) {
+    # Line plot of selected summary metrics
+    p <- ggplot(df_long, aes(x = hour, y = value, color = metric)) +
+      geom_line(linewidth = 1) +
+      geom_point(size = 1.8) +
+      labs(
+        x = "Hour of Day",
+        y = "Proportion",
+        title = title
+      ) +
+      theme_minimal(base_size = 13) +
+      theme(
+        plot.title = element_text(face = "bold"),
+        legend.title = element_blank()
+      )
+  } else {
+    # Boxplot visualization from quantiles if available
+    # Expect columns for q1_prop, median_prop, q3_prop, min_prop, max_prop
+    p <- ggplot(dt_util, aes(x = factor(hour))) +
+      geom_boxplot(
+        aes(
+          ymin = min_prop,
+          lower = q1_prop,
+          middle = median_prop,
+          upper = q3_prop,
+          ymax = max_prop
+        ),
+        stat = "identity",
+        fill = "skyblue",
+        alpha = 0.4
+      ) +
+      labs(
+        x = "Hour of Day",
+        y = "Proportion",
+        title = title
+      ) +
+      theme_minimal(base_size = 13) +
+      theme(
+        plot.title = element_text(face = "bold")
+      )
+  }
+  
+  return(p)
+}
 
+```
+
+```{r}
+utilization_visual(hourly_summary_agg_max, title = "Hourly distibution of maximum utilization rates")
+utilization_visual(hourly_summary_agg_max, line = FALSE, title = "Hourly distibution of maximum utilization rates")
+utilization_visual(hourly_summary_agg, title = "Hourly distribution of mean utilization rates")
+utilization_visual(hourly_summary_agg, line = FALSE, title = "Hourly distribution of mean utilization rates")
+```
 
 
 

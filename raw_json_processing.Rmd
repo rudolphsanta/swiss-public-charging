@@ -289,6 +289,11 @@ csv_to_parquet <- function(csv_file_paths, dest_folder) {
   }
   
   for (csv_path in csv_file_paths) {
+    # Only proceed if file truly ends with .csv (not .csv.zip etc.)
+    if (!grepl("\\.csv$", csv_path, ignore.case = TRUE)) {
+      next
+    }
+
     # Build output Parquet path
     file_base <- file_path_sans_ext(basename(csv_path))  # strip .csv
     parquet_path <- file.path(dest_folder, paste0(file_base, ".parquet"))
