@@ -24,7 +24,7 @@ chg_avail_files <- list.files(charging_data_root,full.names = TRUE)
 ```
 
 
-##Charging point data
+# Charging point descriptions
 ```{r Charging Point Details}
 CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/ChargingStationDetails_10-10-2025.csv",
                             colClasses = c(
@@ -68,9 +68,72 @@ hist(CH_EVSE_details$ChargingFacility_power, xlab = "Charge Point Power [kW]", m
 # boxplot(CH_EVSE_details_cleaned$ChargingFacility_power)
 ```
 
+```{r Spatial join of charging infrastructure}
+
+library(sf)
+
+#load Swiss Cantonal boundaries shapefile
+CH_Cantons <- st_read("M:/Rudolph/0-Datasets/Switzerland/Swiss_admin_boundaries_shapefiles/swissBOUNDARIES3D_1_5_TLM_KANTONSGEBIET.shp")
+
+#load Swiss District boundaries shapefile
+CH_Districts <- st_read("M:/Rudolph/0-Datasets/Switzerland/Swiss_admin_boundaries_shapefiles/swissBOUNDARIES3D_1_5_TLM_BEZIRKSGEBIET.shp")
+
+CH_Municipality <- st_read("M:/Rudolph/0-Datasets/Switzerland/Swiss_admin_boundaries_shapefiles/swissBOUNDARIES3D_1_5_TLM_HOHEITSGEBIET.shp")
+
+#convert charging data "CH_EVSE_details_short" into an sf format
+CH_EVSE_sf <- st_as_sf(CH_EVSE_details_short, coords = c("longitude", "latitude"), crs = 4326) %>%
+  st_transform(., st_crs(CH_Cantons))
+
+#spatial join of cantons
+CH_EVSE_locations <- st_join(CH_EVSE_sf, CH_Cantons %>% select(NAME), join = st_within) %>%
+  rename(Canton = NAME)
+
+#spatial join of districts
+CH_EVSE_locations <- st_join(CH_EVSE_locations, CH_Districts %>% select(NAME), join = st_within) %>%
+  rename(District = NAME)
+
+CH_EVSE_df <- CH_EVSE_locations %>%
+  st_drop_geometry()
+
+```
+
+```{r Total Swiss Charging Aggregated}
+CH_chgpts <- read.csv("M:/Rudolph/0-Datasets/Switzerland/Swiss_Charging_Stock_April2025.csv") 
+
+CH_chgpts_pwr <- CH_chgpts %>%
+  select(year,month,contains("kW_count")) %>%
+  rename(count_10 = chargingPower_10kW_count,
+         count_21 = chargingPower_21kW_count,
+         count_42 = chargingPower_42kW_count,
+         count_100 = chargingPower_100kW_count,
+         count_100plus = chargingPower_100pluskW_count)
+
+colnames(CH_chgpts_pwr[,-c(year,month)]) <- gsub("^[^_]*_([^_]+)_.*$", "\\1", colnames(CH_chgpts_pwr[,-c(year,month)]))
 
 
-## Charging availability data
+
+```
+
+```{r filter EVSE}
+EVSE_filter <- function(EVSE_df, Latitude = NULL, Longitude = NULL, City = NULL, Country = NULL, PostalCode = NULL, Power = NULL, Powertype = NULL) {
+  #Apply the filters to keep the data usage lower
+  rows <- nrow(EVSE_df)
+  if (!is.null(Latitude))   EVSE_df <- EVSE_df[EVSE_df$latitude %in% Latitude, ]
+  if (!is.null(Longitude))  EVSE_df <- EVSE_df[EVSE_df$longitude %in% Longitude, ]
+  if (!is.null(City))       EVSE_df <- EVSE_df[EVSE_df$City %in% City, ]
+  if (!is.null(Country))    EVSE_df <- EVSE_df[EVSE_df$Country %in% Country, ]
+  if (!is.null(PostalCode)) EVSE_df <- EVSE_df[EVSE_df$PostalCode %in% PostalCode, ]
+  if (!is.null(Power))      EVSE_df <- EVSE_df[EVSE_df$ChargingFacility_power %in% Power, ]
+  if (!is.null(Powertype))  EVSE_df <- EVSE_df[EVSE_df$ChargingFacility_powertype %in% Powertype, ]
+  rows_elim <- rows_elim + (rows - nrow(EVSE_df))  #total number of rows that have been eliminated by the filters.
+  
+  cat("Rows eliminated from filters: ",rows_elim, "\n")
+  return(EVSE_df)
+}
+
+```
+
+# Charging point availability
 
 ```{r load and append ALL Parquet files into a df}
 #this gives a VERY LONG dataframe.
@@ -152,35 +215,6 @@ load_charging_dt <- function(files_to_load, existing_dt = NULL) {
 
 ```
 
-```{r SANDBOX loading Parquet files}
-# undebug(load_charging_df)
-start <- Sys.time()
-# 
-# A <- load_charging_df(chg_avail_files[1:2])
-# df_time <- Sys.time()
-B <- load_charging_dt(chg_avail_files[1:5])
-dt_time <- Sys.time()
-
-# difftime(df_time, start, units = "mins")
-difftime(dt_time, start, units = "mins")
-
-# print(format(object.size(A),units = "GB"))
-print(format(object.size(B),units = "GB"))
-
-# summary(B)
-head(B)
-
-# A_clean <- A[A$EVSEStatus %in% c("Available","Occupied"), ]
-B_clean <- B[B$EVSEStatus %in% c("Available","Occupied"), ]
-print(format(object.size(B_clean),units = "GB"))
-# B_clean2 <- select(B_clean, datetime, EvseID, EVSEStatus)
-# print(format(object.size(B_clean),units = "GB"))
-# print(format(object.size(B_clean2),units = "GB"))
-
-# summary(B)
-# print(format(object.size(B_clean),units = "GB"))
-# print(format(object.size(B_clean2),units = "GB"))
-```
 
 ```{r function for loading data}
 # Function to read and filter one file
@@ -388,28 +422,19 @@ load_filter_charging_dt <- function(files_to_load, IDs = NULL, status = c("Avail
 ```
 
 
-
-```{r filter EVSE}
-EVSE_filter <- function(EVSE_df, Latitude = NULL, Longitude = NULL, City = NULL, Country = NULL, PostalCode = NULL, Power = NULL, Powertype = NULL) {
-  #Apply the filters to keep the data usage lower
-  rows <- nrow(EVSE_df)
-  if (!is.null(Latitude))   EVSE_df <- EVSE_df[EVSE_df$latitude %in% Latitude, ]
-  if (!is.null(Longitude))  EVSE_df <- EVSE_df[EVSE_df$longitude %in% Longitude, ]
-  if (!is.null(City))       EVSE_df <- EVSE_df[EVSE_df$City %in% City, ]
-  if (!is.null(Country))    EVSE_df <- EVSE_df[EVSE_df$Country %in% Country, ]
-  if (!is.null(PostalCode)) EVSE_df <- EVSE_df[EVSE_df$PostalCode %in% PostalCode, ]
-  if (!is.null(Power))      EVSE_df <- EVSE_df[EVSE_df$ChargingFacility_power %in% Power, ]
-  if (!is.null(Powertype))  EVSE_df <- EVSE_df[EVSE_df$ChargingFacility_powertype %in% Powertype, ]
-  rows_elim <- rows_elim + (rows - nrow(EVSE_df))  #total number of rows that have been eliminated by the filters.
-  
-  cat("Rows eliminated from filters: ",rows_elim, "\n")
-  return(EVSE_df)
-}
-
+```{r Get number of rows in the total dataset}
+system.time({
+  chg_dt_Rows <- load_filter_charging_dt_parallel(chg_avail_files,
+                                                  status = NULL,
+                                                  year = NULL,
+                                                  n_cores = 8)
+})
+summary(chg_dt_Rows)
 ```
 
 
-```{r create a single charging object in R - trial}
+
+```{r generate a single typical day set of data for a selected power level of charger}
 system.time({
   # summary(mid_power_EVSE)
 
@@ -424,7 +449,7 @@ system.time({
                                     CH_EVSE_details$ChargingFacility_power > 50, ]
   # rm(chg_dt_full)
   filter_IDs <- unique(high_power_EVSE$EvseID)
-  debug(load_filter_charging_dt_parallel)
+  # undebug(load_filter_charging_dt_parallel)
   chg_dt_full <- load_filter_charging_dt_parallel(chg_avail_files,
                                                  IDs = filter_IDs,
                                                  year = NULL, 
@@ -440,24 +465,7 @@ print(format(object.size(chg_dt_full),units = "GB"))
 ```
 
 
-```{r create a single charging object in R - trial}
-system.time({
-  # summary(mid_power_EVSE)
 
-
-  # mid_power_EVSE <- CH_EVSE_details[!is.na(CH_EVSE_details$ChargingFacility_power) &
-  #                                   CH_EVSE_details$ChargingFacility_power >= 22 &
-  #                                   CH_EVSE_details$ChargingFacility_power < 50, ]
-  # rm(chg_dt_full)
-  # filter_IDs <- unique(mid_power_EVSE$EvseID)
-  # undebug(load_filter_charging_dt_parallel)
-  chg_dt_Rows <- load_filter_charging_dt_parallel(chg_avail_files,
-                                                  status = NULL,
-                                                  year = NULL,
-                                                  n_cores = 8)
-})
-summary(chg_dt_Rows)
-```
 
 ## Utilization rate of charge poitns (EVSE IDs)
 ```{r function to get the utilization rate of each collected timestamp}
@@ -483,18 +491,8 @@ utilization_rate <- function(dt_input, IDs = NULL, year = NULL, month = NULL, da
 
 ```
 
-```{r SANDBOX}
-system.time({
-  utilization_rate(chg_dt_full, hour = 1)
-})
 
-head(unique(chg_dt_full$datetime))
-
-summary_dt <- chg_dt_full[ , .(prop_occupied = mean(EVSEStatus == "Occupied")), by = datetime]
-
-summary(summary_dt)
-```
-#Functions for computing utilization rate statistics (hourly distributions for the days given)
+## Functions for computing utilization rate statistics (hourly distributions for the days given)
 ```{r direct computation of all data}
 #compute the utilization rate stats for one vector.
 compute_stats <- function(x) {
@@ -856,126 +854,12 @@ utilization_visual(hourly_summary_agg, line = FALSE, title = "Hourly distributio
 
 
 
+### Updated to here as of 15 October 2025
 
 
 
-```{r function to convert charging availability tables - monthly data - DELETE}
-
-EVSE_processing <- function(csv_file, merged_object = NULL, id_col = "EvseID") { #file path as a string input
-  # Read the csv file into a dataframe object
-  my.df <- read.csv(csv_file)
-  
-  # Convert the availability statuses into factors (to save storage space)
-  factor_cols <- 2:dim(my.df)[2]
-  my.df[ , factor_cols] <- lapply(my.df[ , factor_cols],factor)
-
-  # (Optional) Merge with an existing object
-  if(!is.null(merged_object)) {
-    result.df <- merge(merged_object, my.df, by = id_col, all = TRUE)
-    return(result.df) #return a merged dataframe if one is defined
-  }
-  return(my.df) #return the single processed data frame
-}
-
-```
-
-```{r function to cycle through files in a folder - monthly data - DELETE}
-read_csvs <- function(main_dir = monthly_chg_files, start_f = 1, n_files = 'All') {
-  # Get list of sub-directories in the main directory
-  # subdirs <- list.dirs(main_dir, full.names = TRUE, recursive = FALSE)
-  
-  # Get list of files in the main directory
-  if(n_files == 'All')  file_list <- list.files(main_dir)
-  # to do a subset of the files
-  else {
-    end_f = start_f + n_files - 1
-    file_list <- list.files(main_dir)[start_f:end_f]
-  }
-  
-  df_statuses <- NULL #initiate NULL for the dataframe
-  
-  # Loop through each sub directory
-  for (file in file_list) {
-    start_time <- Sys.time()
-
-    # Create the full path to the CSV file
-    csv_file_path <- file.path(main_dir, file)
-    
-    if(!file.exists(csv_file_path)) next #if the file does not exist, then go to the next one.
-    
-    if(is.null(df_statuses)) { #the first time this is run, df_statuses will be NULL
-      # Read and process the csv
-      df_statuses <- EVSE_processing(csv_file_path)
-    } else {
-      # Read, process, and merge the csv with existing ones
-      df_statuses <- EVSE_processing(csv_file_path, merged_object = df_statuses)
-    }
-    end_time <- Sys.time()
-
-    execution_time <- end_time - start_time
-
-    cat("Execution time was", as.numeric(execution_time, units = "secs"), "s for this iteration.\n")
-
-  }
-  
-  return(df_statuses)
-}
-
-```
-
-```{r Spatial join of charging infrastructure}
-
-library(sf)
-
-#load Swiss Cantonal boundaries shapefile
-CH_Cantons <- st_read("M:/Rudolph/0-Datasets/Switzerland/Swiss_admin_boundaries_shapefiles/swissBOUNDARIES3D_1_5_TLM_KANTONSGEBIET.shp")
-
-#load Swiss District boundaries shapefile
-CH_Districts <- st_read("M:/Rudolph/0-Datasets/Switzerland/Swiss_admin_boundaries_shapefiles/swissBOUNDARIES3D_1_5_TLM_BEZIRKSGEBIET.shp")
-
-CH_Municipality <- st_read("M:/Rudolph/0-Datasets/Switzerland/Swiss_admin_boundaries_shapefiles/swissBOUNDARIES3D_1_5_TLM_HOHEITSGEBIET.shp")
-
-#convert charging data "CH_EVSE_details_short" into an sf format
-CH_EVSE_sf <- st_as_sf(CH_EVSE_details_short, coords = c("longitude", "latitude"), crs = 4326) %>%
-  st_transform(., st_crs(CH_Cantons))
-
-#spatial join of cantons
-CH_EVSE_locations <- st_join(CH_EVSE_sf, CH_Cantons %>% select(NAME), join = st_within) %>%
-  rename(Canton = NAME)
-
-#spatial join of districts
-CH_EVSE_locations <- st_join(CH_EVSE_locations, CH_Districts %>% select(NAME), join = st_within) %>%
-  rename(District = NAME)
-
-CH_EVSE_df <- CH_EVSE_locations %>%
-  st_drop_geometry()
-
-```
-
-```{r}
-Muni_list <- unique(CH_Municipality$NAME)
-
-CH_Territory[CH_Territory$NAME == "Baden", ]
-
-length(unique(CH_Districts$NAME))
-```
-
-```{r Total Swiss Charging Aggregated}
-CH_chgpts <- read.csv("M:/Rudolph/0-Datasets/Switzerland/Swiss_Charging_Stock_April2025.csv") 
-
-CH_chgpts_pwr <- CH_chgpts %>%
-  select(year,month,contains("kW_count")) %>%
-  rename(count_10 = chargingPower_10kW_count,
-         count_21 = chargingPower_21kW_count,
-         count_42 = chargingPower_42kW_count,
-         count_100 = chargingPower_100kW_count,
-         count_100plus = chargingPower_100pluskW_count)
-
-colnames(CH_chgpts_pwr[,-c(year,month)]) <- gsub("^[^_]*_([^_]+)_.*$", "\\1", colnames(CH_chgpts_pwr[,-c(year,month)]))
 
 
-
-```
 
 
 ```{r function to read in csvs}
