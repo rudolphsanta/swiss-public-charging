@@ -26,7 +26,7 @@ chg_avail_files <- list.files(charging_data_root,full.names = TRUE)
 
 ##Charging point data
 ```{r Charging Point Details}
-CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/ChargingStationDetails_22-07-2025.csv",
+CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/ChargingStationDetails_10-10-2025.csv",
                             colClasses = c(
                               # DynamicInfoAvailable = "character",
                               IsOpen24Hours = "logical",
@@ -413,13 +413,18 @@ EVSE_filter <- function(EVSE_df, Latitude = NULL, Longitude = NULL, City = NULL,
 system.time({
   # summary(mid_power_EVSE)
 
+  low_power_EVSE <- CH_EVSE_details[!is.na(CH_EVSE_details$ChargingFacility_power) &
+                                    CH_EVSE_details$ChargingFacility_power < 22, ]
 
   mid_power_EVSE <- CH_EVSE_details[!is.na(CH_EVSE_details$ChargingFacility_power) &
                                     CH_EVSE_details$ChargingFacility_power >= 22 &
                                     CH_EVSE_details$ChargingFacility_power < 50, ]
+  
+  high_power_EVSE <- CH_EVSE_details[!is.na(CH_EVSE_details$ChargingFacility_power) &
+                                    CH_EVSE_details$ChargingFacility_power > 50, ]
   # rm(chg_dt_full)
-  filter_IDs <- unique(mid_power_EVSE$EvseID)
-  # undebug(load_filter_charging_dt_parallel)
+  filter_IDs <- unique(high_power_EVSE$EvseID)
+  debug(load_filter_charging_dt_parallel)
   chg_dt_full <- load_filter_charging_dt_parallel(chg_avail_files,
                                                  IDs = filter_IDs,
                                                  year = NULL, 
@@ -446,7 +451,7 @@ system.time({
   # rm(chg_dt_full)
   # filter_IDs <- unique(mid_power_EVSE$EvseID)
   # undebug(load_filter_charging_dt_parallel)
-  chg_dt_Rows <- load_filter_charging_dt_parallel(chg_avail_files[1],
+  chg_dt_Rows <- load_filter_charging_dt_parallel(chg_avail_files,
                                                   status = NULL,
                                                   year = NULL,
                                                   n_cores = 8)
@@ -512,6 +517,7 @@ compute_stats <- function(x) {
   
   # Return as named list
   return(list(
+    N           = n,
     min_prop    = min_prop,
     q1_prop     = q1_prop,
     median_prop = median_prop,
@@ -588,7 +594,7 @@ daily_hourly_summary <- function(dt) {
   
   # Compute summary statistics across days for each hour
   summary_by_hour <- daily_hour[, .(
-    n_days    = .N,
+    N_days    = .N,
     min_prop       = min(daily_mean, na.rm = TRUE),
     q1_prop       = quantile(daily_mean, 0.25, na.rm = TRUE),
     median_prop    = median(daily_mean, na.rm = TRUE),
@@ -633,7 +639,7 @@ daily_hourly_summary_max <- function(dt) {
   
   # Compute summary statistics across days for each hour
   summary_by_hour <- daily_hour[, .(
-    n_days    = .N,
+    N_days    = .N,
     min_prop       = min(daily_max, na.rm = TRUE),
     q1_prop       = quantile(daily_max, 0.25, na.rm = TRUE),
     median_prop    = median(daily_max, na.rm = TRUE),
