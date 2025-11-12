@@ -208,14 +208,130 @@ raw_data_merge_parallel <- function(root_folder, sub_folder, output_file_path = 
 
 ```
 
-```{r execution trials}
-mar_24_seq <- raw_data_merge(raw_data_root, "2024-03")
+```{r count how many .jsons are merged only}
 
-undebug(raw_data_merge_parallel)
-sep_25_par <- raw_data_merge_parallel(raw_data_root, "2025-09")
+count_5min_snapshots <- function(root_folder, sub_folder, print = TRUE) {
+  start <- Sys.time()
+  full_path <- file.path(root_folder, sub_folder)
+  
+  # list JSON files
+  month_status_files <- list.files(full_path, full.names = TRUE, pattern = "\\.json$")
+  
+  # extract timestamps
+  timestamps <- str_extract(month_status_files, "\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2}")
+  datetimes <- as.POSIXct(timestamps, format = "%Y-%m-%d-%H-%M-%S", tz = "Europe/Zurich")
+  
+  # remove invalid timestamps
+  datetimes <- datetimes[!is.na(datetimes)]
+  
+  if (length(datetimes) == 0) {
+    warning("No valid timestamps found in file names.")
+    return(NULL)
+  }
+  
+  # round to nearest 5-min block
+  datetimes_5min <- round_date(datetimes, "5 minutes")
+  
+  # determine the month boundaries
+  month_start <- floor_date(min(datetimes_5min), "month")
+  month_end <- ceiling_date(max(datetimes_5min), "month") - minutes(5)
+  expected_times <- seq(from = month_start, to = month_end, by = "5 min")
+  
+  # count unique and expected intervals
+  unique_times <- unique(datetimes_5min)
+  matched <- expected_times[expected_times %in% unique_times]
+  missing <- setdiff(expected_times, unique_times)
+  
+  num_unique_snapshots <- length(unique_times)
+  num_expected_snapshots <- length(expected_times)
+  
+  # theoretical full-month 5-min count (from 1st to last day of the month)
+  year <- as.integer(str_sub(sub_folder, 1, 4))
+  month <- as.integer(str_sub(sub_folder, 6, 7))
+  theoretical_start <- ymd_hms(sprintf("%04d-%02d-01 00:00:00", year, month), tz = "Europe/Zurich")
+  theoretical_end <- theoretical_start + months(1) - minutes(5)
+  # theoretical_end <- ceiling_date(theoretical_start, "month") - minutes(5)
+  theoretical_times <- seq(from = theoretical_start, to = theoretical_end, by = "5 min")
+  num_theoretical_snapshots <- length(theoretical_times)
+  
+  pct_coverage <- round(100 * num_unique_snapshots / num_theoretical_snapshots, 2)
+  
+  end <- Sys.time()
+  duration <- round(difftime(end, start, units = "secs"), 2)
+  
+  if(print == TRUE) {
+    cat("---- 5-Min Snapshot Summary ----\n")
+    cat("Folder: ", sub_folder, "\n")
+    cat("Total JSON files found: ", length(month_status_files), "\n")
+    cat("Unique 5-min intervals observed: ", num_unique_snapshots, "\n")
+    cat("Observed range: ", format(month_start, "%Y-%m-%d %H:%M"), "to ", format(month_end, "%Y-%m-%d %H:%M"), "\n")
+    cat("Expected intervals (based on timestamps): ", num_expected_snapshots, "\n")
+    cat("Theoretical range: ", format(theoretical_start, "%Y-%m-%d %H:%M"), "to ", format(theoretical_end, "%Y-%m-%d %H:%M"), "\n")
+    cat("Theoretical full-month intervals: ", num_theoretical_snapshots, "\n")
+    cat("Coverage: ", pct_coverage, "%\n")
+    cat("Execution time: ", duration, " sec\n")
+  }
+  
+  
+  return(list(
+    folder = sub_folder,
+    total_files = length(month_status_files),
+    unique_snapshots = num_unique_snapshots,
+    expected_snapshots = num_expected_snapshots,
+    theoretical_snapshots = num_theoretical_snapshots,
+    coverage_percent = pct_coverage,
+    missing_intervals = missing
+  ))
+}
+```
 
-summary(sep_25_par$diagnostics)
 
+```{r count total and expected snapshots}
+#single month count
+count <- count_5min_snapshots(raw_data_root, "2024-10")
+
+#total dataset counts
+first_month <- "2022-12"
+last_month <- "2025-10"
+
+ovr_seq_start <- as.POSIXct(paste0(first_month, "-01 00:00"), format="%Y-%m-%d %H:%M", tz = "Europe/Zurich") - minutes(5) + minutes(5)
+ovr_seq_end   <- as.POSIXct(paste0(last_month, "-01 00:00"), format="%Y-%m-%d %H:%M", tz = "Europe/Zurich") + months(1) - minutes(5)
+
+# Generate 5-minute sequence
+ovr_seq <- seq(from = ovr_seq_start, to = ovr_seq_end, by = "5 min")
+length(ovr_seq)  # total number of theoretical 5-min intervals
+
+# --- Step 2: Generate vector of months between first and last month inclusive ---
+# Convert first/last month to Date objects (first day of month)
+first_month_date <- as.Date(paste0(first_month, "-01"))
+last_month_date  <- as.Date(paste0(last_month, "-01"))
+
+# Sequence of months
+month_seq <- seq(from = first_month_date, to = last_month_date, by = "month")
+month_seq_fmt <- format(month_seq, "%Y-%m")  # "YYYY-MM" format
+
+# Count actual snapshots over the horizon
+count_ovr <- 0
+for(month in month_seq_fmt) {
+  result <- tryCatch({
+    count_5min_snapshots(raw_data_root, month, print = FALSE)
+  }, warning = function(w) {
+    message("Warning skipped for month: ", month, " - ", conditionMessage(w))
+    return(NULL)
+  }, error = function(e) {
+    message("Error skipped for month: ", month, " - ", conditionMessage(e))
+    return(NULL)
+  })
+  
+  if(is.null(result)) next
+  
+  count_ovr <- count_ovr + result$unique_snapshots
+}
+
+cat("Total snapshots observed: ", count_ovr, "\n")
+cat("Total theoretical snapshots: ", length(ovr_seq), "\n")
+cat("Date Range: ", format(ovr_seq_start, "%Y-%m-%d %H:%M"), "to ", format(ovr_seq_end, "%Y-%m-%d %H:%M"), "\n")
+cat("Percent observed", (count_ovr/length(ovr_seq))*100, "%\n")
 ```
 
 ```{r SANDBOX}
