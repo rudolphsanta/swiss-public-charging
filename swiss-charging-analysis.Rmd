@@ -36,8 +36,11 @@ CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/Ch
                               ),
                             stringsAsFactors = TRUE
 ) %>%
-  select(EvseID,ChargingStationId,Accessibility,GeoCoordinates,City,Country,PostalCode,Street,IsOpen24Hours,LastUpdate,DynamicInfoAvailable,DynamicPowerLevel,ChargingFacility_power,ChargingFacility_powertype) %>%
+  # select(EvseID,ChargingStationId,Accessibility,GeoCoordinates,City,Country,PostalCode,Street,IsOpen24Hours,LastUpdate,DynamicInfoAvailable,DynamicPowerLevel,ChargingFacility_power,ChargingFacility_powertype) %>%
   separate(GeoCoordinates, into = c("latitude", "longitude"), sep = " ", convert = TRUE)
+
+summary(CH_EVSE_details)
+dim(CH_EVSE_details)
 
 CH_EVSE_details$LastUpdate <- ymd_hms(CH_EVSE_details$LastUpdate, tz = "UTC")
 
@@ -56,10 +59,127 @@ CH_EVSE_details$latitude <- ifelse(
 CH_EVSE_details <- CH_EVSE_details[!duplicated(CH_EVSE_details), ]
 
 summary(CH_EVSE_details)
-CH_EVSE_details
+dim(CH_EVSE_details)
 
 #write.csv(CH_EVSE_details, "M:/Rudolph/R-Projects/swiss-public-charging/charging_stations_cleaned_2025-07.csv")
 
+```
+
+
+
+```{r correlation heatmap}
+# Load required packages
+library(lsr)    # for etaSquared
+library(vcd)    # for assocstats (Cramer's V)
+library(dplyr)
+
+# Subset relevant variables
+df <- CH_EVSE_details %>%
+  select(Accessibility, ChargingFacility_powertype,
+         latitude, longitude, ChargingFacility_power)
+
+# Identify variable types
+cat_vars <- c("Accessibility", "ChargingFacility_powertype")
+cont_vars <- c("latitude", "longitude", "ChargingFacility_power")
+
+# Initialize correlation matrix
+vars <- c(cat_vars, cont_vars)
+corr_mat <- matrix(NA, nrow = length(vars), ncol = length(vars),
+                   dimnames = list(vars, vars))
+
+# Compute correlations
+for (i in seq_along(vars)) {
+  for (j in seq_along(vars)) {
+    v1 <- df[[vars[i]]]
+    v2 <- df[[vars[j]]]
+    
+    # Continuous–continuous: Pearson
+    if (vars[i] %in% cont_vars & vars[j] %in% cont_vars) {
+      corr_mat[i, j] <- cor(v1, v2, use = "pairwise.complete.obs", method = "pearson")
+      
+    # Categorical–categorical: Cramer's V
+    } else if (vars[i] %in% cat_vars & vars[j] %in% cat_vars) {
+      tbl <- table(v1, v2)
+      corr_mat[i, j] <- suppressWarnings(assocstats(tbl)$cramer)
+      
+    # Categorical–continuous: eta (correlation ratio)
+    } else if (vars[i] %in% cat_vars & vars[j] %in% cont_vars) {
+      corr_mat[i, j] <- sqrt(etaSquared(aov(v2 ~ v1), anova = TRUE)[1, "eta.sq"])
+    } else if (vars[i] %in% cont_vars & vars[j] %in% cat_vars) {
+      corr_mat[i, j] <- sqrt(etaSquared(aov(v1 ~ v2), anova = TRUE)[1, "eta.sq"])
+    }
+  }
+}
+
+# Convert to data frame for easy viewing
+corr_df <- as.data.frame(corr_mat)
+# print(round(corr_df, 2))
+corr_mat_num <- apply(corr_mat, 2, as.numeric)
+rownames(corr_mat_num) <- rownames(corr_mat)
+
+#Plot
+par(mar = c(1, 1, 3, 1))   # smaller outer margins (bottom, left, top, right)
+par(oma = c(0, 0, 0, 0))   # outer margins to zero
+par(cex = 0.7)             # scale all text elements slightly larger
+corrplot(corr_mat_num,
+         method = "color",        # colored boxes
+         type = "upper",          # show only upper triangle
+         tl.col = "black",        # text color for variable names
+         tl.srt = 45,             # rotate variable labels
+         addCoef.col = "black",   # show correlation values
+         number.cex = 1.2,        # size of correlation numbers
+         tl.cex = 1.1,            # size of variable labels
+         mar = c(1, 1, 3, 1),     # margin size
+         title = "Mixed Correlation Matrix: CH_EVSE_data",
+         cl.cex = 1.0,            # color legend size
+         col = colorRampPalette(c("darkblue", "white", "darkred"))(200),
+         na.label = " ")     
+
+
+```
+
+
+```{r}
+CH_EVSE_details2 <- CH_EVSE_details %>%
+  mutate(ChargingFacility_powertype_cat = case_when(
+    is.null(ChargingFacility_powertype) ~ 0,
+    ChargingFacility_powertype == "AC_1_PHASE" ~ 1,
+    ChargingFacility_powertype == "AC_3_PHASE" ~ 2,
+    ChargingFacility_powertype == "DC" ~ 3,
+    TRUE ~ NA_real_   # fallback for unexpected values
+  ))
+```
+
+
+```{r}
+plot(x = CH_EVSE_details2$ChargingFacility_power, y = CH_EVSE_details2$ChargingFacility_powertype_cat)
+```
+
+```{r}
+CH_EVSE_details_empty <- filter(CH_EVSE_details2, ChargingFacility_power == 0 | is.na(ChargingFacility_power))
+CH_EVSE_details_AC1 <- filter(CH_EVSE_details, ChargingFacility_powertype == "AC_1_PHASE")
+summary(CH_EVSE_details_AC1)
+```
+```{r summarize missing}
+summary_missing <- sapply(CH_EVSE_details, function(x) {
+  # Start with NAs
+  missing_count <- sum(is.na(x))
+  
+  # Add zeros (only for numeric columns)
+  if (is.numeric(x)) {
+    missing_count <- missing_count + sum(x == 0, na.rm = TRUE)
+  }
+  
+  # Add empty strings (only for character or factor columns)
+  if (is.character(x) || is.factor(x)) {
+    missing_count <- missing_count + sum(trimws(as.character(x)) == "", na.rm = TRUE)
+  }
+  
+  return(missing_count)
+})
+
+summary_missing <- sort(summary_missing, decreasing = TRUE)
+print(summary_missing)
 ```
 
 
@@ -218,7 +338,7 @@ load_charging_dt <- function(files_to_load, existing_dt = NULL) {
 
 ```{r function for loading data}
 # Function to read and filter one file
-process_file <- function(file, IDs = NULL, status = c("Available","Occupied"), year = NULL, month = NULL, day = NULL, wday = NULL, hour = NULL, minute = NULL, existing_dt = NULL) {
+process_file <- function(file, IDs = NULL, status = NULL, year = NULL, month = NULL, day = NULL, wday = NULL, hour = NULL, minute = NULL, existing_dt = NULL) {
   dt <- as.data.table(arrow::read_parquet(file))
 
   if (nrow(dt) == 0 || !"datetime" %in% names(dt)) return(NULL)
@@ -248,9 +368,13 @@ process_file <- function(file, IDs = NULL, status = c("Available","Occupied"), y
   # return(dt)
   return(list(dt = dt, rows_elim = rows_elim))
 }
+```
 
+
+
+```{r function for loading data using parallelization}
 #load and filter data to keep objects small, but together
-load_filter_charging_dt_parallel <- function(files_to_load, IDs = NULL, status = c("Available","Occupied"), year = NULL, month = NULL, day = NULL, wday = NULL, hour = NULL, minute = NULL, existing_dt = NULL, n_cores = 4) {
+load_filter_charging_dt_parallel <- function(files_to_load, IDs = NULL, status = c("Available","Occupied"), year = NULL, month = NULL, day = NULL, wday = NULL, hour = NULL, minute = NULL, existing_dt = NULL, n_cores = 4, mem_efficient = FALSE) {
   rows_elim <- 0
   file_summaries <- list()
   # Ensure existing_dt is a data.table
@@ -276,8 +400,18 @@ load_filter_charging_dt_parallel <- function(files_to_load, IDs = NULL, status =
     rows_elim <-  rows - nrow(existing_dt)
   }
   
-  
-    
+  #Pre-filters of files_to_load if a year or month is given
+  if(!is.null(year)) {
+    year_patterns <- paste0(year, collapse = "|")   # e.g. "2024|2023"
+    # --- Filter logic: keep if any year OR month appears ---
+    files_to_load <- files_to_load[grepl(year_patterns, files_to_load)]
+  }
+  if(!is.null(month)) {
+    month_strs <- sprintf("%02d", month)
+    month_patterns <- paste0("-", month_strs, "_", collapse = "|")  # e.g. "-09_|-12_"
+    files_to_load <- files_to_load[grepl(month_patterns, files_to_load)]
+  }
+
   # Create cluster
   n_cores <- ifelse(n_cores <= 0, detectCores() + n_cores, n_cores) #if a negative number is entered, that is to be the number of cores UNUSED by this execution
   cat("Executing on ",n_cores, " cores.\n")
@@ -288,7 +422,7 @@ load_filter_charging_dt_parallel <- function(files_to_load, IDs = NULL, status =
     library(lubridate)
   })
   clusterExport(cl, varlist = c("files_to_load","IDs","status","year","month",
-                                "day","wday","hour","minute","existing_dt"),
+                                "day","wday","hour","minute","existing_dt","process_file"),
                 envir = environment())
   
   # Run in parallel
@@ -316,7 +450,27 @@ load_filter_charging_dt_parallel <- function(files_to_load, IDs = NULL, status =
     cat("Rows eliminated from filters: ",rows_elim, "\n")
     
     # Combine all new data.tables
-    new_dt <- rbindlist(all_dt, use.names = TRUE, fill = TRUE)
+    if(mem_efficient == FALSE) {
+      new_dt <- rbindlist(all_dt, use.names = TRUE, fill = TRUE)
+    } else {
+      # Streamed incremental rbindlist (low-memory binding)
+      cat("Combining", length(all_dt), "tables incrementally...\n")
+      new_dt <- NULL
+      for (i in seq_along(all_dt)) {
+        chunk <- all_dt[[i]]
+        if (is.null(new_dt)) {
+          new_dt <- chunk
+        } else {
+          new_dt <- rbindlist(list(new_dt, chunk), use.names = TRUE, fill = TRUE)
+        }
+        rm(chunk)
+        if (i %% 5 == 0 || i == length(all_dt)) {
+          cat("  Bound", i, "of", length(all_dt), "files...\n")
+        }
+        gc(verbose = FALSE)
+      }
+      
+    }
     
     # Combine with existing_dt if provided
     if (!is.null(existing_dt)) {
@@ -427,7 +581,8 @@ system.time({
   chg_dt_Rows <- load_filter_charging_dt_parallel(chg_avail_files,
                                                   status = NULL,
                                                   year = NULL,
-                                                  n_cores = 8)
+                                                  n_cores = 4,
+                                                  mem_efficient = TRUE)
 })
 summary(chg_dt_Rows)
 ```
@@ -464,6 +619,57 @@ system.time({
 print(format(object.size(chg_dt_full),units = "GB"))
 ```
 
+## Exploratory analysis of the charging dataset
+```{r function to check how many times each status appears for each EvseID}
+summarize_evse_status <- function(dt_statuses, id_col = "EvseID", status_col = "EVSEStatus") {
+  # Ensure it's a data.table
+  if(is.data.table(dt_statuses) == FALSE) dt_statuses <- as.data.table(dt_statuses)
+  
+  # Step 1: Count occurrences of each status per EvseID
+  # counts <- dt_statuses[, .N, by = .(EvseID = get(id_col), status = get(status_col))]
+  dt_statuses[, c("EvseID","EVSEStatus") := .(as.character(EvseID), as.character(EVSEStatus))]
+  gc()
+  counts <- dt_statuses[, .N, by = .(EvseID, EVSEStatus)]
+  
+  # Step 2: Reshape to wide format
+  summary_dt <- dcast(
+    counts,
+    formula = EvseID ~ EVSEStatus,
+    value.var = "N",
+    fill = 0
+  )
+
+  # Step 3: Add Total column (sum across all status columns)
+  setDT(summary_dt)
+  status_cols <- setdiff(names(summary_dt), "EvseID")
+  summary_dt[, Total := rowSums(.SD), .SDcols = status_cols]
+  
+  # Step 4 (optional): Order columns nicely
+  setcolorder(summary_dt, c("EvseID", sort(status_cols), "Total"))
+  
+  return(as.data.table(summary_dt))
+}
+```
+
+```{r }
+if(exists("chg_dt_full")) rm(chg_dt_full) #clear the dt if it's there
+system.time({
+  chg_dt_full <- load_filter_charging_dt_parallel(chg_avail_files,
+                                                # status = NULL,
+                                                # year = 2025,
+                                                month = c(5,6,7),
+                                                wday = c(1,2,3,4,5),
+                                                hour = 12,
+                                                mem_efficient = TRUE)
+})
+
+# undebug(summarize_evse_status)
+chg_dt_summary <- summarize_evse_status(chg_dt_full)
+
+summary_dt <- chg_dt_full[ , .(prop_occupied = mean(EVSEStatus == "Occupied")), by = datetime]
+summary_dt <- summary_dt[, hour := as.integer(format(datetime, "%H"))]
+
+```
 
 
 
@@ -501,10 +707,10 @@ compute_stats <- function(x) {
   
   # Compute summary statistics
   min_prop    <- min(x, na.rm = TRUE)
-  q1_prop     <- quantile(x, 0.25, na.rm = TRUE)
+  q1_prop     <- as.numeric(quantile(x, 0.25, na.rm = TRUE))
   median_prop <- median(x, na.rm = TRUE)
   mean_prop   <- mean(x, na.rm = TRUE)
-  q3_prop     <- quantile(x, 0.75, na.rm = TRUE)
+  q3_prop     <- as.numeric(quantile(x, 0.75, na.rm = TRUE))
   max_prop    <- max(x, na.rm = TRUE)
   sd_prop     <- sd(x, na.rm = TRUE)
   
@@ -526,50 +732,6 @@ compute_stats <- function(x) {
     ci95_low    = ci95_low,
     ci95_high   = ci95_high
   ))
-}
-```
-
-
-```{r Bootstrapped from hourly observations}
-# Function to compute percentile-based CI for the mean
-compute_percentile_CI <- function(x, n_boot) {
-  boot_means <- replicate(n_boot, mean(sample(x, replace = TRUE)))
-  ci <- quantile(boot_means, probs = c(0.025, 0.975), na.rm = TRUE)
-  return(ci)
-}
-  
-##Using bootstrapping
-bootstrapped_hourly_summary <- function(dt, n_boot = 1000, seed = 123) {
-  set.seed(seed)
-  
-  # # Ensure input is a data.table
-  # dt <- as.data.table(dt)
-  
-  # Extract hour from datetime
-  dt[, hour := as.integer(format(datetime, "%H"))]
-  
-  # Bootstrapped summary by hour
-  result <- dt[, {
-    # Bootstrap: sample prop_occupied with replacement n_boot times
-    boot_stats <- replicate(n_boot, unlist(compute_stats(sample(prop_occupied, replace = TRUE))))
-    
-    # Average statistics across bootstrap samples
-    stats_mean <- rowMeans(boot_stats)
-    
-    # Percentile-based 95% CI for the mean of prop_occupied
-    ci95 <- compute_percentile_CI(prop_occupied, n_boot)
-    
-    # Combine results
-    stats_mean["ci95_low"]  <- ci95[1]
-    stats_mean["ci95_high"] <- ci95[2]
-    
-    as.list(stats_mean)
-  }, by = hour]
-  
-  # Sort by hour
-  setorder(result, hour)
-  
-  return(result)
 }
 ```
 
@@ -617,6 +779,26 @@ daily_hourly_summary <- function(dt) {
   setorder(summary_by_hour, hour)
   return(summary_by_hour)
 }
+
+daily_mean_sample <- function(dt, hr) {
+  # # Expect dt to have: datetime (POSIXct) and prop_occupied (numeric)
+  # dt <- as.data.table(dt)
+  
+  # Extract date and hour from POSIX datetime
+  dt[, `:=`(
+    date = as.Date(datetime),
+    hour = as.integer(format(datetime, "%H"))
+  )]
+  
+  # Compute daily mean utilization for each hour
+  daily_hour <- dt[, .(daily_mean = mean(prop_occupied, na.rm = TRUE)),
+                   by = .(date, hour)]
+  
+  mean_hour_sample <- daily_hour[hour == hr, daily_mean]
+  
+  return(mean_hour_sample)
+}
+  
 ```
 
 ```{r Take maximum value as the hourly value when aggregating across days}
@@ -662,8 +844,107 @@ daily_hourly_summary_max <- function(dt) {
   setorder(summary_by_hour, hour)
   return(summary_by_hour)
 }
+
+daily_max_sample <- function(dt, hr) {
+  # # Expect dt to have: datetime (POSIXct) and prop_occupied (numeric)
+  # dt <- as.data.table(dt)
+  
+  # Extract date and hour from POSIX datetime
+  dt[, `:=`(
+    date = as.Date(datetime),
+    hour = as.integer(format(datetime, "%H"))
+  )]
+  
+  # Compute daily mean utilization for each hour
+  daily_hour <- dt[, .(daily_max = max(prop_occupied, na.rm = TRUE)),
+                   by = .(date, hour)]
+  
+  max_hour_sample <- daily_hour[hour == hr, daily_max]
+  
+  return(max_hour_sample)
+}
 ```
 
+
+```{r Bootstrapped from hourly observations}
+# Function to compute percentile-based CI for the mean
+compute_percentile_CI <- function(x, n_boot) {
+  boot_means <- replicate(n_boot, mean(sample(x, replace = TRUE)))
+  ci <- quantile(boot_means, probs = c(0.025, 0.975), na.rm = TRUE)
+  return(ci)
+}
+  
+##Using bootstrapping
+bootstrapped_hourly_summary <- function(dt, n_boot = 1000, seed = 123, sample.ret = FALSE) {
+  set.seed(seed)
+  
+  # # Ensure input is a data.table
+  # dt <- as.data.table(dt)
+  
+  # Extract hour from datetime
+  dt[, hour := as.integer(format(datetime, "%H"))]
+  
+  # choose n_boot to be equal to the size of the original sample if not given
+  n_samp <- uniqueN(dt$date)
+  if(is.null(n_boot)) n_boot <- n_days
+  
+  # Bootstrapped summary by hour
+  result <- dt[, {
+    # Bootstrap: sample prop_occupied with replacement n_boot times
+    boot_stats <- replicate(n_boot, unlist(compute_stats(sample(prop_occupied, replace = TRUE))))
+    
+    # Average statistics across bootstrap samples
+    stats_mean <- rowMeans(boot_stats)
+    
+    # Percentile-based 95% CI for the mean of prop_occupied
+    ci95 <- compute_percentile_CI(prop_occupied, n_boot)
+    
+    # Combine results
+    stats_mean["ci95_low"]  <- ci95[1]
+    stats_mean["ci95_high"] <- ci95[2]
+    
+    as.list(stats_mean)
+  }, by = hour]
+  
+  # Sort by hour
+  setorder(result, hour)
+  
+  if(sample.ret == FALSE) return(result)
+    
+  #If a sample is requested
+  first_hour <- result$hour[1]
+  values_first_hour <- dt[hour == first_hour, prop_occupied]
+  
+  # Generate bootstrap sample means
+  boot_sample <- replicate(n_boot, mean(sample(values_first_hour, replace = TRUE)))
+  
+  # Return BOTH summary and sample in a list
+  return(list(
+    summary = result,
+    sample_hour = list(
+      hour = first_hour,
+      boot_samples = boot_sample
+    )
+  ))
+}
+
+bootstrapped_hourly_samples <- function(dt, hr, n_boot = 1000, seed = 123) {
+  set.seed(seed)
+
+  dt <- as.data.table(dt)
+
+  # Extract hour
+  dt[, hour := as.integer(format(datetime, "%H"))]
+
+  values_hour <- dt[hour == hr, prop_occupied]
+  
+  # Generate bootstrap sample 
+  boot_sample <- sample(values_hour, size = n_boot, replace = TRUE)
+
+  return(boot_sample)
+}
+
+```
 
 
 ```{r Hierarchal (cluster) boostrapping. Resampling is done from days, not individual 5-minute observations}
@@ -718,31 +999,84 @@ hierarchical_hourly_bootstrap <- function(dt, n_boot = NULL, seed = 123) {
   
   return(result)
 }
+
+
+
+h_bootstrapped_hourly_samples <- function(dt, hr, n_boot = NULL, seed = 123) {
+  set.seed(seed)
+
+  dt <- as.data.table(dt)
+  
+  # Extract date and hour
+  dt[, `:=`(
+    date = as.Date(datetime),
+    hour = as.integer(format(datetime, "%H"))
+  )]
+  
+  # Compute daily means by hour (one per day-hour)
+  daily_hour <- dt[, .(daily_mean = mean(prop_occupied, na.rm = TRUE)),
+                   by = .(date, hour)]
+  
+  n_days <- uniqueN(daily_hour$date)
+  if(is.null(n_boot)) n_boot <- n_days
+
+  values_hour <- daily_hour[hour == hr, daily_mean]
+  
+  # Generate bootstrap sample means
+  boot_sample <-sample(values_hour, size = n_boot, replace = TRUE)
+  
+  return(boot_sample)
+}
+
+```
+
+```{r Sample distributions of one hour}
+crosssection <- summary_dt[hour == 12, prop_occupied]
+mean_hourly <- daily_mean_sample(summary_dt, hr = 12)
+max_hourly <- daily_max_sample(summary_dt, hr = 12)
+bootstrapped <- bootstrapped_hourly_samples(summary_dt, hr = 12)
+hbootstrapped <- h_bootstrapped_hourly_samples(summary_dt, hr = 12)
+
+#cross sectional
+length(crosssection)
+hist(crosssection, xlim = c(0, 0.2), breaks = "FD")
+#hourly means
+length(mean_hourly)
+hist(mean_hourly, xlim = c(0, 0.2), breaks = "FD")
+#hourly maxes
+length(max_hourly)
+hist(max_hourly, xlim = c(0, 0.2), breaks = "FD")
+#bootstrapped
+length(bootstrapped)
+hist(bootstrapped, xlim = c(0, 0.2), breaks = "FD")
+#hBootstrapped
+length(hbootstrapped)
+hist(hbootstrapped, xlim = c(0, 0.2), breaks = "FD")
+
+#QQ plots of the cross sectional and sampled values
+qqnorm(crosssection, pch = 19, frame = FALSE, main = "Cross-sectional Normal Q-Q Plot")
+qqline(crosssection, col = 'lightblue', lwd = 2)
+
+qqnorm(mean_hourly, pch = 19, frame = FALSE, main = "Hourly Mean Normal Q-Q Plot")
+qqline(mean_hourly, col = 'lightblue', lwd = 2)
+
+qqnorm(bootstrapped, pch = 19, frame = FALSE, main = "Bootstrapped Normal Q-Q Plot")
+qqline(bootstrapped, col = 'lightblue', lwd = 2)
+
+qqnorm(hbootstrapped, pch = 19, frame = FALSE, main = "H Bootstrapped Normal Q-Q Plot")
+qqline(hbootstrapped, col = 'lightblue', lwd = 2)
+
+
 ```
 
 ```{r comparing the resulting summary statistics for the hourly utilization rates}
-summary_dt <- chg_dt_full[ , .(prop_occupied = mean(EVSEStatus == "Occupied")), by = datetime]
-summary_dt <- summary_dt[, hour := as.integer(format(datetime, "%H"))]
+hourly_summary <- summary_dt[, compute_stats(prop_occupied), by = hour]
+#undebug(bootstrapped_hourly_summary)
+hourly_summary_boot <- bootstrapped_hourly_summary(summary_dt, n_boot = 1000)
+hourly_summary_agg <- daily_hourly_summary(summary_dt)
+hourly_summary_agg_max <- daily_hourly_summary_max(summary_dt)
+hourly_summary_hboot <- hierarchical_hourly_bootstrap(summary_dt)
 
-system.time({
-  hourly_summary <- summary_dt[, compute_stats(prop_occupied), by = hour]
-})
-
-system.time({
-  hourly_summary_boot <- bootstrapped_hourly_summary(summary_dt, n_boot = 1000)
-})
-
-system.time({
-  hourly_summary_agg <- daily_hourly_summary(summary_dt)
-})
-
-system.time({
-  hourly_summary_agg_max <- daily_hourly_summary_max(summary_dt)
-})
-
-system.time({
-  hourly_summary_hboot <- hierarchical_hourly_bootstrap(summary_dt)
-})
 
 hourly_compare <- hourly_summary_agg_max - hourly_summary_agg
 
@@ -792,6 +1126,17 @@ utilization_visual <- function(dt_util,
   
   df_long <- df_long %>% filter(metric %in% metrics_to_show)
   
+  # --- Detect available sample size column ---
+  n_col <- NULL
+  n_label <- NULL
+  if ("N" %in% names(dt_util)) {
+    n_col <- "N"
+    n_label <- "observations for each hour"
+  } else if ("N_days" %in% names(dt_util)) {
+    n_col <- "N_days"
+    n_label <- "days aggregated for each hour"
+  }
+  
   # --- Plotting ---
   if (line) {
     # Line plot of selected summary metrics
@@ -810,7 +1155,6 @@ utilization_visual <- function(dt_util,
       )
   } else {
     # Boxplot visualization from quantiles if available
-    # Expect columns for q1_prop, median_prop, q3_prop, min_prop, max_prop
     p <- ggplot(dt_util, aes(x = factor(hour))) +
       geom_boxplot(
         aes(
@@ -831,8 +1175,36 @@ utilization_visual <- function(dt_util,
       ) +
       theme_minimal(base_size = 13) +
       theme(
-        plot.title = element_text(face = "bold")
-      )
+        plot.title = element_text(face = "bold"))
+        
+    # --- Add annotation about sample size ---
+    if (!is.null(n_col)) {
+      n_values <- dt_util[[n_col]]
+      n_min <- min(n_values, na.rm = TRUE)
+      n_max <- max(n_values, na.rm = TRUE)
+      
+      if (n_min == n_max) {
+        note_text <- paste0("n ", n_label, " in each boxplot = ", n_min)
+      } else {
+        note_text <- paste0("Range of n ", n_label, " in each boxplot = ", n_min, " - ", n_max)
+      }
+      
+      # Position text in top-left corner
+      y_top <- max(dt_util$max_prop - 0.02, na.rm = TRUE)
+      x_min <- min(as.numeric(as.character(dt_util$hour)) + 1, na.rm = TRUE)
+      
+      p <- p +
+        annotate(
+          "text",
+          x = x_min,
+          y = y_top,
+          label = note_text,
+          hjust = 0,
+          vjust = -0.8,
+          size = 3.5,
+          fontface = "italic"
+        )
+    }
   }
   
   return(p)
@@ -840,17 +1212,97 @@ utilization_visual <- function(dt_util,
 
 ```
 
-```{r}
+```{r visualization trials}
 utilization_visual(hourly_summary_agg_max, title = "Hourly distibution of maximum utilization rates")
 utilization_visual(hourly_summary_agg_max, line = FALSE, title = "Hourly distibution of maximum utilization rates")
 utilization_visual(hourly_summary_agg, title = "Hourly distribution of mean utilization rates")
 utilization_visual(hourly_summary_agg, line = FALSE, title = "Hourly distribution of mean utilization rates")
+utilization_visual(hourly_summary_boot, title = "Hourly bootstrapped distribution of mean utilization rates")
+utilization_visual(hourly_summary_boot, line = FALSE, title = "Hourly bootstrapped distribution of mean utilization rates")
 ```
 
 
+## Cross sectional utilization rate of all data
+```{r}
+# Dataset is large so it must be done by hour as R cannot allocate an object of the size needed.
+hours <- 0:23
+
+# Initialize lists to store results per hour
+stats_list       <- vector("list", length(hours))
+boot_list        <- vector("list", length(hours))
+agg_list         <- vector("list", length(hours))
+agg_max_list     <- vector("list", length(hours))
+hboot_list       <- vector("list", length(hours))
+
+for (h in hours) {
+  cat("Processing hour", h, "...\n")
+  
+  # --- Load data filtered for this hour ---
+  dt_hour <- load_filter_charging_dt_parallel(
+    chg_avail_files,
+    IDs = NULL,
+    year = NULL,
+    month = NULL,
+    day = NULL,
+    wday = NULL,
+    hour = h, # filter by this hour
+    minute = NULL,
+    existing_dt = NULL,
+    n_cores = 4,
+    mem_efficient = TRUE)
+  
+  # If no rows returned, create NA row
+  if (nrow(dt_hour) == 0) {
+    placeholder <- data.table(matrix(NA_real_, nrow = 1, ncol = 11))
+    colnames(placeholder) <- c("N","min_prop","q1_prop","median_prop","mean_prop",
+                               "q3_prop","max_prop","sd_prop","ci95_low","ci95_high","hour")
+    stats_list[[h + 1]]   <- copy(placeholder)
+    boot_list[[h + 1]]    <- copy(placeholder)
+    agg_list[[h + 1]]     <- copy(placeholder)
+    agg_max_list[[h + 1]] <- copy(placeholder)
+    hboot_list[[h + 1]]   <- copy(placeholder)
+    next
+  }
+  
+  # --- Create summary_dt for this hour ---
+  summary_dt_h <- dt_hour[, .(prop_occupied = mean(EVSEStatus == "Occupied")), by = datetime]
+  summary_dt_h[, hour := as.integer(format(datetime, "%H"))]
+  
+  # --- Apply your summary functions ---
+  stats_list[[h + 1]]       <- summary_dt_h[, compute_stats(prop_occupied), by = hour] #data.table(compute_stats(summary_dt_b$prop_occupied), hour = 1)
+  boot_list[[h + 1]]        <- bootstrapped_hourly_summary(summary_dt_h, n_boot = 1000) #data.table(bootstrapped_hourly_summary(summary_dt, n_boot = 1000), hour = h)
+  agg_list[[h + 1]]         <- daily_hourly_summary(summary_dt_h) #data.table(daily_hourly_summary(summary_dt), hour = h)
+  agg_max_list[[h + 1]]     <- daily_hourly_summary_max(summary_dt_h) #data.table(daily_hourly_summary_max(summary_dt), hour = h)
+  hboot_list[[h + 1]]       <- hierarchical_hourly_bootstrap(summary_dt_h) #data.table(hierarchical_hourly_bootstrap(summary_dt), hour = h)
+  
+  # Clean up to save memory
+  rm(dt_hour, summary_dt_h)
+  gc()
+}
+
+# --- Combine hourly results into final 5 tables ---
+hourly_summary       <- rbindlist(stats_list, use.names = TRUE, fill = TRUE)
+hourly_summary_boot  <- rbindlist(boot_list, use.names = TRUE, fill = TRUE)
+hourly_summary_agg   <- rbindlist(agg_list, use.names = TRUE, fill = TRUE)
+hourly_summary_agg_max <- rbindlist(agg_max_list, use.names = TRUE, fill = TRUE)
+hourly_summary_hboot <- rbindlist(hboot_list, use.names = TRUE, fill = TRUE)
+
+cat("All hourly summaries completed.\n")
+```
 
 
-
+```{r visualization of cross-sectional data across the 5 methods}
+utilization_visual(hourly_summary, title = "Hourly distibution of all utilization rates")
+utilization_visual(hourly_summary, line = FALSE, title = "Hourly distibution of all utilization rates")
+utilization_visual(hourly_summary_agg, title = "Hourly distribution of mean utilization rates")
+utilization_visual(hourly_summary_agg, line = FALSE, title = "Hourly distribution of mean utilization rates")
+utilization_visual(hourly_summary_agg_max, title = "Hourly distibution of maximum utilization rates")
+utilization_visual(hourly_summary_agg_max, line = FALSE, title = "Hourly distibution of maximum utilization rates")
+utilization_visual(hourly_summary_boot, title = "Hourly bootstrapped distribution of mean utilization rates")
+utilization_visual(hourly_summary_boot, line = FALSE, title = "Hourly bootstrapped distribution of mean utilization rates")
+utilization_visual(hourly_summary_hboot, title = "Hourly hierarchal bootstrapped distribution of mean utilization rates")
+utilization_visual(hourly_summary_hboot, line = FALSE, title = "Hourly hierarchal bootstrapped distribution of mean utilization rates")
+```
 
 
 

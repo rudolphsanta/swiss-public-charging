@@ -433,6 +433,7 @@ csv_to_parquet <- function(csv_file_paths, dest_folder) {
 ```
 
 ```{r}
+#Again, this can run without changes, the code checks what already exists in the destination folder
 charging_data_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data_CSV")
 chg_avail_csvs <- list.files(charging_data_root,full.names = TRUE)
 
