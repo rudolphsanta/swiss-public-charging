@@ -892,6 +892,7 @@ bootstrapped_hourly_summary <- function(dt, n_boot = 1000, seed = 123, sample.re
   result <- dt[, {
     # Bootstrap: sample prop_occupied with replacement n_boot times
     boot_stats <- replicate(n_boot, unlist(compute_stats(sample(prop_occupied, replace = TRUE))))
+    boot_stats <- unlist(compute_stats(sample(prop_occupied, size = n_boot, replace = TRUE)))
     
     # Average statistics across bootstrap samples
     stats_mean <- rowMeans(boot_stats)
@@ -1305,8 +1306,148 @@ utilization_visual(hourly_summary_hboot, line = FALSE, title = "Hourly hierarcha
 ```
 
 
+##Charging Load
+```{r}
+chg_dt_load <- filter(chg_dt_full, EVSEStatus == "Occupied") %>%
+  merge(CH_EVSE_details[, c("EvseID","ChargingFacility_power")], by = "EvseID")
 
-### Updated to here as of 15 October 2025
+chg_dt_load[, `:=`(
+  date = as.Date(datetime),
+  hour = as.integer(format(datetime, "%H")),
+  minute = as.integer(format(datetime, "%M")))]
+
+  
+load_minute_dt <- chg_dt_load[, .(total_load = sum(ChargingFacility_power, na.rm = TRUE),
+                                  NA_sum     = sum(is.na(ChargingFacility_power)),
+                                  mean_EVSE  = mean(ChargingFacility_power, na.rm = TRUE)), 
+                              by = .(date, hour, minute)]
+
+load_hour_dt <- load_minute_dt[, .(max_load = max(total_load, na.rm = TRUE),
+                                   NA_max = max(NA_sum, na.rm = TRUE),
+                                   mean_EVSE = mean(mean_EVSE)), 
+                               by = .(date, hour)]
+setorder(load_hour_dt,date,hour)
+
+
+ 
+```
+
+```{r generate the hourly load per month and save}
+# if(exists("chg_dt_full")) rm(chg_dt_full) #clear the dt if it's there
+output_root <- "C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVLoad-Data_CSV"
+if(!dir.exists(output_root)) {
+  dir.create(output_root, recursive = TRUE)
+}
+
+#set CH_EVSE_data such that it keeps only the higher power level if there are duplicate EvseIDs
+chg_power_details <- CH_EVSE_details %>%
+  group_by(EvseID) %>%
+  slice_max(order_by = ChargingFacility_power, n = 1) %>%
+  ungroup() %>%
+  select(EvseID, ChargingFacility_power)
+
+global_worst <- data.table() #initiate empty data table.
+
+# month_parquet <- chg_avail_files[1]
+for(month_parquet in chg_avail_files) {
+  #generate the full output file path
+  org_file_base <- basename(month_parquet) %>%
+    tools::file_path_sans_ext(.)
+  csv_filename <- paste0(org_file_base, "_load.csv")
+  csv_filepath <- file.path(output_root, csv_filename)
+  
+  # if (file.exists(csv_filepath)) {
+  #   message("File already exists, skipping: ", csv_filepath)
+  #   next
+  #   }
+  
+  month_dt_full <- load_filter_charging_dt_parallel(month_parquet, mem_efficient = TRUE)
+  
+  if (is.null(month_dt_full)) {
+    message("Empty file, skipping: ", csv_filepath)
+    next
+    }
+  
+  chg_dt_load <- filter(month_dt_full, EVSEStatus == "Occupied") %>%
+    merge(chg_power_details, by = "EvseID")
+
+  chg_dt_load[, `:=`(
+    date = as.Date(datetime),
+    hour = as.integer(format(datetime, "%H")),
+    minute = as.integer(format(datetime, "%M")))]
+
+    load_minute_dt <- chg_dt_load[, {
+    total_load_val <- sum(ChargingFacility_power, na.rm = TRUE)
+    count_occ_val  <- .N
+    NA_sum_val     <- sum(is.na(ChargingFacility_power))
+    mean_EVSE_val  <- mean(ChargingFacility_power, na.rm = TRUE)
+    mean_imputed_val <- NA_sum_val * mean_EVSE_val
+    .(total_load = total_load_val,
+      count_occ  = count_occ_val,
+      NA_sum     = NA_sum_val,
+      pct_NA_points = NA_sum_val / (count_occ_val + NA_sum_val),
+      mean_EVSE  = mean_EVSE_val,
+      mean_imputed = mean_imputed_val,
+      pct_imputed = mean_imputed_val / total_load_val)
+    }, by = .(date, hour, minute)]
+  
+  load_hour_dt <- load_minute_dt[, `:=` (max_load = max(total_load, na.rm = TRUE),
+                                         max_occ = max(count_occ, na.rm = TRUE),
+                                         max_pct_NA_pts = max(pct_NA_points, na.rm = TRUE),
+                                         NA_max = max(NA_sum, na.rm = TRUE),
+                                         mean_EVSE = max(mean_EVSE),
+                                         max_imputed = max(mean_imputed, na.rm = TRUE),
+                                         max_pct_imputed = max(pct_imputed, na.rm = TRUE)), 
+                                     by = .(date, hour)]
+  setorder(load_hour_dt,date,hour)
+  
+  write.csv(load_hour_dt, csv_filepath)
+  
+  # (1) Worst NA count
+  worst_NA_row <- load_minute_dt[which.max(NA_sum)][, source_file := month_parquet]
+
+  # (2) Worst % NA points
+  worst_pctNA_row <- load_minute_dt[which.max(pct_NA_points)][, source_file := month_parquet]
+
+  # (3) Worst imputed power
+  worst_imp_row <- load_minute_dt[which.max(mean_imputed)][, source_file := month_parquet]
+
+  # (4) Worst % imputed
+  worst_pctImp_row <- load_minute_dt[which.max(pct_imputed)][, source_file := month_parquet]
+
+  # Combine into local worst
+  local_worst_rows <- rbindlist(list(
+    worst_NA_row,
+    worst_pctNA_row,
+    worst_imp_row,
+    worst_pctImp_row
+  ), use.names = TRUE, fill = TRUE)
+
+  # Append to global table
+  global_worst <- rbind(global_worst, local_worst_rows, fill = TRUE)
+}
+
+#collapse the monthly global worsts into a true global worst.
+final_global_worst <- rbindlist(list(
+  global_worst[which.max(NA_max)],
+  global_worst[which.max(max_pct_NA_pts)],
+  global_worst[which.max(max_imputed)],
+  global_worst[which.max(max_pct_imputed)]
+), use.names = TRUE, fill = TRUE)
+
+# Remove duplicates if different metrics point to the same row
+final_global_worst <- unique(final_global_worst)
+  
+
+
+```
+
+
+```{r}
+#what percent of load does the hour with the most NA EVSE potentially account for if we impute those NAs with the mean power level?
+imputed_missing_load <- global_na_worst$NA_max*global_na_worst$mean_EVSE
+pct_NA_load <- imputed_missing_load/global_na_worst$max_load
+```
 
 
 
