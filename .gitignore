@@ -6,3 +6,5 @@
 .RDataTmp2
 .RDataTmp3
 .RDataTmp4
+.RDataTmp*
+*.Rproj.user
