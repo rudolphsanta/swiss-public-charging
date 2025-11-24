@@ -799,6 +799,7 @@ daily_mean_sample <- function(dt, hr) {
   return(mean_hour_sample)
 }
   
+
 ```
 
 ```{r Take maximum value as the hourly value when aggregating across days}
