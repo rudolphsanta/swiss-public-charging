@@ -2,9 +2,5 @@
 .Rhistory
 .RData
 .Ruserdata
-.RDataTmp1
-.RDataTmp2
-.RDataTmp3
-.RDataTmp4
 .RDataTmp*
 *.Rproj.user
