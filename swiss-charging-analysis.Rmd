@@ -1289,6 +1289,12 @@ hourly_summary_agg_max <- rbindlist(agg_max_list, use.names = TRUE, fill = TRUE)
 hourly_summary_hboot <- rbindlist(hboot_list, use.names = TRUE, fill = TRUE)
 
 cat("All hourly summaries completed.\n")
+
+write.csv(hourly_summary,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/cross_section_summary.csv")
+write.csv(hourly_summary_boot,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/cross_section_summary_bootstrapped.csv")
+write.csv(hourly_summary_agg,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/cross_section_summary_means.csv")
+write.csv(hourly_summary_agg_max,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/cross_section_summary_maxes.csv")
+write.csv(hourly_summary_hboot,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/cross_section_summary_hbootstrapped.csv")
 ```
 
 
@@ -1305,6 +1311,234 @@ utilization_visual(hourly_summary_hboot, title = "Hourly hierarchal bootstrapped
 utilization_visual(hourly_summary_hboot, line = FALSE, title = "Hourly hierarchal bootstrapped distribution of mean utilization rates")
 ```
 
+#Subsets of data
+```{r Utilization rate of 2023 Data}
+output_folder <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary")
+subset_name <- "2023"
+
+# Dataset is large so it must be done by hour as R cannot allocate an object of the size needed.
+hours <- 0:23
+
+# Initialize lists to store results per hour
+stats_list       <- vector("list", length(hours))
+boot_list        <- vector("list", length(hours))
+agg_list         <- vector("list", length(hours))
+agg_max_list     <- vector("list", length(hours))
+hboot_list       <- vector("list", length(hours))
+
+for (h in hours) {
+  cat("Processing hour", h, "...\n")
+  
+  # --- Load data filtered for this hour ---
+  dt_hour <- load_filter_charging_dt_parallel(
+    chg_avail_files,
+    IDs = NULL,
+    year = 2023,
+    month = NULL,
+    day = NULL,
+    wday = NULL,
+    hour = h, # filter by this hour
+    minute = NULL,
+    existing_dt = NULL,
+    n_cores = 4,
+    mem_efficient = TRUE)
+  
+  # If no rows returned, create NA row
+  if (nrow(dt_hour) == 0) {
+    placeholder <- data.table(matrix(NA_real_, nrow = 1, ncol = 11))
+    colnames(placeholder) <- c("N","min_prop","q1_prop","median_prop","mean_prop",
+                               "q3_prop","max_prop","sd_prop","ci95_low","ci95_high","hour")
+    stats_list[[h + 1]]   <- copy(placeholder)
+    boot_list[[h + 1]]    <- copy(placeholder)
+    agg_list[[h + 1]]     <- copy(placeholder)
+    agg_max_list[[h + 1]] <- copy(placeholder)
+    hboot_list[[h + 1]]   <- copy(placeholder)
+    next
+  }
+  
+  # --- Create summary_dt for this hour ---
+  summary_dt_h <- dt_hour[, .(prop_occupied = mean(EVSEStatus == "Occupied")), by = datetime]
+  summary_dt_h[, hour := as.integer(format(datetime, "%H"))]
+  
+  # --- Apply your summary functions ---
+  stats_list[[h + 1]]       <- summary_dt_h[, compute_stats(prop_occupied), by = hour] #data.table(compute_stats(summary_dt_b$prop_occupied), hour = 1)
+  boot_list[[h + 1]]        <- bootstrapped_hourly_summary(summary_dt_h, n_boot = 1000) #data.table(bootstrapped_hourly_summary(summary_dt, n_boot = 1000), hour = h)
+  agg_list[[h + 1]]         <- daily_hourly_summary(summary_dt_h) #data.table(daily_hourly_summary(summary_dt), hour = h)
+  agg_max_list[[h + 1]]     <- daily_hourly_summary_max(summary_dt_h) #data.table(daily_hourly_summary_max(summary_dt), hour = h)
+  hboot_list[[h + 1]]       <- hierarchical_hourly_bootstrap(summary_dt_h) #data.table(hierarchical_hourly_bootstrap(summary_dt), hour = h)
+  
+  # Clean up to save memory
+  rm(dt_hour, summary_dt_h)
+  gc()
+}
+
+# --- Combine hourly results into final 5 tables ---
+hourly_summary_2023       <- rbindlist(stats_list, use.names = TRUE, fill = TRUE)
+hourly_summary_boot_2023  <- rbindlist(boot_list, use.names = TRUE, fill = TRUE)
+hourly_summary_agg_2023   <- rbindlist(agg_list, use.names = TRUE, fill = TRUE)
+hourly_summary_agg_max_2023 <- rbindlist(agg_max_list, use.names = TRUE, fill = TRUE)
+hourly_summary_hboot_2023 <- rbindlist(hboot_list, use.names = TRUE, fill = TRUE)
+
+cat("All hourly summaries completed.\n")
+
+write.csv(hourly_summary_2023,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2023_summary.csv")
+write.csv(hourly_summary_boot_2023,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2023_summary_bootstrapped.csv")
+write.csv(hourly_summary_agg_2023,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2023_summary_means.csv")
+write.csv(hourly_summary_agg_max_2023,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2023_summary_maxes.csv")
+write.csv(hourly_summary_hboot_2023,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2023_summary_hbootstrapped.csv")
+```
+
+```{r Utilization rate of 2024 Data}
+output_folder <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary")
+subset_name <- "2024"
+
+# Dataset is large so it must be done by hour as R cannot allocate an object of the size needed.
+hours <- 0:23
+
+# Initialize lists to store results per hour
+stats_list       <- vector("list", length(hours))
+boot_list        <- vector("list", length(hours))
+agg_list         <- vector("list", length(hours))
+agg_max_list     <- vector("list", length(hours))
+hboot_list       <- vector("list", length(hours))
+
+for (h in hours) {
+  cat("Processing hour", h, "...\n")
+  
+  # --- Load data filtered for this hour ---
+  dt_hour <- load_filter_charging_dt_parallel(
+    chg_avail_files,
+    IDs = NULL,
+    year = 2024,
+    month = NULL,
+    day = NULL,
+    wday = NULL,
+    hour = h, # filter by this hour
+    minute = NULL,
+    existing_dt = NULL,
+    n_cores = 4,
+    mem_efficient = TRUE)
+  
+  # If no rows returned, create NA row
+  if (nrow(dt_hour) == 0) {
+    placeholder <- data.table(matrix(NA_real_, nrow = 1, ncol = 11))
+    colnames(placeholder) <- c("N","min_prop","q1_prop","median_prop","mean_prop",
+                               "q3_prop","max_prop","sd_prop","ci95_low","ci95_high","hour")
+    stats_list[[h + 1]]   <- copy(placeholder)
+    boot_list[[h + 1]]    <- copy(placeholder)
+    agg_list[[h + 1]]     <- copy(placeholder)
+    agg_max_list[[h + 1]] <- copy(placeholder)
+    hboot_list[[h + 1]]   <- copy(placeholder)
+    next
+  }
+  
+  # --- Create summary_dt for this hour ---
+  summary_dt_h <- dt_hour[, .(prop_occupied = mean(EVSEStatus == "Occupied")), by = datetime]
+  summary_dt_h[, hour := as.integer(format(datetime, "%H"))]
+  
+  # --- Apply your summary functions ---
+  stats_list[[h + 1]]       <- summary_dt_h[, compute_stats(prop_occupied), by = hour] #data.table(compute_stats(summary_dt_b$prop_occupied), hour = 1)
+  boot_list[[h + 1]]        <- bootstrapped_hourly_summary(summary_dt_h, n_boot = 1000) #data.table(bootstrapped_hourly_summary(summary_dt, n_boot = 1000), hour = h)
+  agg_list[[h + 1]]         <- daily_hourly_summary(summary_dt_h) #data.table(daily_hourly_summary(summary_dt), hour = h)
+  agg_max_list[[h + 1]]     <- daily_hourly_summary_max(summary_dt_h) #data.table(daily_hourly_summary_max(summary_dt), hour = h)
+  hboot_list[[h + 1]]       <- hierarchical_hourly_bootstrap(summary_dt_h) #data.table(hierarchical_hourly_bootstrap(summary_dt), hour = h)
+  
+  # Clean up to save memory
+  rm(dt_hour, summary_dt_h)
+  gc()
+}
+
+# --- Combine hourly results into final 5 tables ---
+hourly_summary_2024       <- rbindlist(stats_list, use.names = TRUE, fill = TRUE)
+hourly_summary_boot_2024  <- rbindlist(boot_list, use.names = TRUE, fill = TRUE)
+hourly_summary_agg_2024   <- rbindlist(agg_list, use.names = TRUE, fill = TRUE)
+hourly_summary_agg_max_2024 <- rbindlist(agg_max_list, use.names = TRUE, fill = TRUE)
+hourly_summary_hboot_2024 <- rbindlist(hboot_list, use.names = TRUE, fill = TRUE)
+
+cat("All hourly summaries completed.\n")
+
+write.csv(hourly_summary_2024,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2024_summary.csv")
+write.csv(hourly_summary_boot_2024,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2024_summary_bootstrapped.csv")
+write.csv(hourly_summary_agg_2024,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2024_summary_means.csv")
+write.csv(hourly_summary_agg_max_2024,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2024_summary_maxes.csv")
+write.csv(hourly_summary_hboot_2024,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2024_summary_hbootstrapped.csv")
+```
+
+```{r Utilization rate of 2025 Data}
+output_folder <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary")
+subset_name <- "2025"
+
+# Dataset is large so it must be done by hour as R cannot allocate an object of the size needed.
+hours <- 0:23
+
+# Initialize lists to store results per hour
+stats_list       <- vector("list", length(hours))
+boot_list        <- vector("list", length(hours))
+agg_list         <- vector("list", length(hours))
+agg_max_list     <- vector("list", length(hours))
+hboot_list       <- vector("list", length(hours))
+
+for (h in hours) {
+  cat("Processing hour", h, "...\n")
+  
+  # --- Load data filtered for this hour ---
+  dt_hour <- load_filter_charging_dt_parallel(
+    chg_avail_files,
+    IDs = NULL,
+    year = 2025,
+    month = NULL,
+    day = NULL,
+    wday = NULL,
+    hour = h, # filter by this hour
+    minute = NULL,
+    existing_dt = NULL,
+    n_cores = 4,
+    mem_efficient = TRUE)
+  
+  # If no rows returned, create NA row
+  if (nrow(dt_hour) == 0) {
+    placeholder <- data.table(matrix(NA_real_, nrow = 1, ncol = 11))
+    colnames(placeholder) <- c("N","min_prop","q1_prop","median_prop","mean_prop",
+                               "q3_prop","max_prop","sd_prop","ci95_low","ci95_high","hour")
+    stats_list[[h + 1]]   <- copy(placeholder)
+    boot_list[[h + 1]]    <- copy(placeholder)
+    agg_list[[h + 1]]     <- copy(placeholder)
+    agg_max_list[[h + 1]] <- copy(placeholder)
+    hboot_list[[h + 1]]   <- copy(placeholder)
+    next
+  }
+  
+  # --- Create summary_dt for this hour ---
+  summary_dt_h <- dt_hour[, .(prop_occupied = mean(EVSEStatus == "Occupied")), by = datetime]
+  summary_dt_h[, hour := as.integer(format(datetime, "%H"))]
+  
+  # --- Apply your summary functions ---
+  stats_list[[h + 1]]       <- summary_dt_h[, compute_stats(prop_occupied), by = hour] #data.table(compute_stats(summary_dt_b$prop_occupied), hour = 1)
+  boot_list[[h + 1]]        <- bootstrapped_hourly_summary(summary_dt_h, n_boot = 1000) #data.table(bootstrapped_hourly_summary(summary_dt, n_boot = 1000), hour = h)
+  agg_list[[h + 1]]         <- daily_hourly_summary(summary_dt_h) #data.table(daily_hourly_summary(summary_dt), hour = h)
+  agg_max_list[[h + 1]]     <- daily_hourly_summary_max(summary_dt_h) #data.table(daily_hourly_summary_max(summary_dt), hour = h)
+  hboot_list[[h + 1]]       <- hierarchical_hourly_bootstrap(summary_dt_h) #data.table(hierarchical_hourly_bootstrap(summary_dt), hour = h)
+  
+  # Clean up to save memory
+  rm(dt_hour, summary_dt_h)
+  gc()
+}
+
+# --- Combine hourly results into final 5 tables ---
+hourly_summary_2025       <- rbindlist(stats_list, use.names = TRUE, fill = TRUE)
+hourly_summary_boot_2025  <- rbindlist(boot_list, use.names = TRUE, fill = TRUE)
+hourly_summary_agg_2025   <- rbindlist(agg_list, use.names = TRUE, fill = TRUE)
+hourly_summary_agg_max_2025 <- rbindlist(agg_max_list, use.names = TRUE, fill = TRUE)
+hourly_summary_hboot_2025 <- rbindlist(hboot_list, use.names = TRUE, fill = TRUE)
+
+cat("All hourly summaries completed.\n")
+
+write.csv(hourly_summary_2025,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2025_summary.csv")
+write.csv(hourly_summary_boot_2025,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2025_summary_bootstrapped.csv")
+write.csv(hourly_summary_agg_2025,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2025_summary_means.csv")
+write.csv(hourly_summary_agg_max_2025,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2025_summary_maxes.csv")
+write.csv(hourly_summary_hboot_2025,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/2025_summary_hbootstrapped.csv")
+```
 
 ##Charging Load
 ```{r}
