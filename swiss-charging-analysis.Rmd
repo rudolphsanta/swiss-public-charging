@@ -374,7 +374,7 @@ process_file <- function(file, IDs = NULL, status = NULL, year = NULL, month = N
 
 ```{r function for loading data using parallelization}
 #load and filter data to keep objects small, but together
-load_filter_charging_dt_parallel <- function(files_to_load, IDs = NULL, status = c("Available","Occupied"), year = NULL, month = NULL, day = NULL, wday = NULL, hour = NULL, minute = NULL, existing_dt = NULL, n_cores = 4, mem_efficient = FALSE) {
+load_filter_charging_dt_parallel <- function(files_to_load, IDs = NULL, status = c("Available","Occupied"), year = NULL, month = NULL, day = NULL, wday = NULL, hour = NULL, minute = NULL, existing_dt = NULL, n_cores = 4, mem_efficient = FALSE, prefilter = TRUE) {
   rows_elim <- 0
   file_summaries <- list()
   # Ensure existing_dt is a data.table
@@ -400,16 +400,18 @@ load_filter_charging_dt_parallel <- function(files_to_load, IDs = NULL, status =
     rows_elim <-  rows - nrow(existing_dt)
   }
   
-  #Pre-filters of files_to_load if a year or month is given
-  if(!is.null(year)) {
-    year_patterns <- paste0(year, collapse = "|")   # e.g. "2024|2023"
-    # --- Filter logic: keep if any year OR month appears ---
-    files_to_load <- files_to_load[grepl(year_patterns, files_to_load)]
-  }
-  if(!is.null(month)) {
-    month_strs <- sprintf("%02d", month)
-    month_patterns <- paste0("-", month_strs, "_", collapse = "|")  # e.g. "-09_|-12_"
-    files_to_load <- files_to_load[grepl(month_patterns, files_to_load)]
+  if(prefilter == FALSE){
+    #Pre-filters of files_to_load if a year or month is given
+    if(!is.null(year)) {
+      year_patterns <- paste0(year, collapse = "|")   # e.g. "2024|2023"
+      # --- Filter logic: keep if any year OR month appears ---
+      files_to_load <- files_to_load[grepl(year_patterns, files_to_load)]
+    }
+    if(!is.null(month)) {
+      month_strs <- sprintf("%02d", month)
+      month_patterns <- paste0("-", month_strs, "_", collapse = "|")  # e.g. "-09_|-12_"
+      files_to_load <- files_to_load[grepl(month_patterns, files_to_load)]
+    }
   }
 
   # Create cluster
@@ -577,14 +579,82 @@ load_filter_charging_dt <- function(files_to_load, IDs = NULL, status = c("Avail
 
 
 ```{r Get number of rows in the total dataset}
-system.time({
-  chg_dt_Rows <- load_filter_charging_dt_parallel(chg_avail_files,
-                                                  status = NULL,
-                                                  year = NULL,
-                                                  n_cores = 4,
-                                                  mem_efficient = TRUE)
-})
-summary(chg_dt_Rows)
+filter_IDs <- unique(CH_EVSE_details$EvseID)
+
+#2022 summary
+Rows_2022 <- load_filter_charging_dt_parallel(chg_avail_files,
+                                              IDs = filter_IDs,
+                                              status = NULL,
+                                              year = 2022,
+                                              n_cores = 4,
+                                              mem_efficient = TRUE,
+                                              prefilter = FALSE) %>%
+  count(EVSEStatus) %>%
+  pivot_wider(
+    names_from = EVSEStatus,
+    values_from = n,
+    values_fill = 0) %>%
+  mutate(Total_Rows = rowSums(across(everything())),
+         year = 2022) %>%
+  select(year, Total_Rows, everything())
+
+#2023 summary
+Rows_2023 <- load_filter_charging_dt_parallel(chg_avail_files,
+                                              IDs = filter_IDs,
+                                              status = NULL,
+                                              year = 2023,
+                                              n_cores = 4,
+                                              mem_efficient = TRUE,
+                                              prefilter = FALSE) %>%
+  count(EVSEStatus) %>%
+  pivot_wider(
+    names_from = EVSEStatus,
+    values_from = n,
+    values_fill = 0) %>%
+  mutate(Total_Rows = rowSums(across(everything())),
+         year = 2023) %>%
+  select(year, Total_Rows, everything())
+
+#2024 summary
+Rows_2024 <- load_filter_charging_dt_parallel(chg_avail_files,
+                                              IDs = filter_IDs,
+                                              status = NULL,
+                                              year = 2024,
+                                              n_cores = 4,
+                                              mem_efficient = TRUE,
+                                              prefilter = FALSE) %>%
+  count(EVSEStatus) %>%
+  pivot_wider(
+    names_from = EVSEStatus,
+    values_from = n,
+    values_fill = 0) %>%
+  mutate(Total_Rows = rowSums(across(everything())),
+         year = 2024) %>%
+  select(year, Total_Rows, everything())
+
+#2025 summary
+Rows_2025 <- load_filter_charging_dt_parallel(chg_avail_files,
+                                              IDs = filter_IDs,
+                                              status = NULL,
+                                              year = 2025,
+                                              n_cores = 4,
+                                              mem_efficient = TRUE,
+                                              prefilter = FALSE) %>%
+  count(EVSEStatus) %>%
+  pivot_wider(
+    names_from = EVSEStatus,
+    values_from = n,
+    values_fill = 0) %>%
+  mutate(Total_Rows = rowSums(across(everything())),
+         year = 2025) %>%
+  select(year, Total_Rows, everything())
+
+
+All_year_summary <- rbind(Rows_2022,Rows_2023,Rows_2024,Rows_2025)
+Total <- sum(All_year_summary$Total_Rows)
+Removed <- sum(All_year_summary$Total_Rows) - (sum(All_year_summary$Available) + sum(All_year_summary$Occupied))
+
+Removed/Total
 ```
 
 
@@ -1097,6 +1167,7 @@ utilization_visual <- function(dt_util,
                                q3 = FALSE,
                                sd = FALSE,
                                line = TRUE,
+                               legend = TRUE,
                                title = "Hourly Utilization Distribution") {
   # --- Defensive checks ---
   if (!"hour" %in% names(dt_util)) stop("Data must have an 'hour' column.")
@@ -1129,15 +1200,17 @@ utilization_visual <- function(dt_util,
   df_long <- df_long %>% filter(metric %in% metrics_to_show)
   
   # --- Detect available sample size column ---
+ 
   n_col <- NULL
   n_label <- NULL
+  
   if ("N" %in% names(dt_util)) {
     n_col <- "N"
     n_label <- "observations for each hour"
-  } else if ("N_days" %in% names(dt_util)) {
-    n_col <- "N_days"
-    n_label <- "days aggregated for each hour"
-  }
+    } else if ("N_days" %in% names(dt_util)) {
+      n_col <- "N_days"
+      n_label <- "days aggregated for each hour"
+      }
   
   # --- Plotting ---
   if (line) {
@@ -1147,9 +1220,10 @@ utilization_visual <- function(dt_util,
       geom_point(size = 1.8) +
       labs(
         x = "Hour of Day",
-        y = "Proportion",
+        y = "Utilization Rate",
         title = title
-      ) +
+      ) + 
+      ylim(0,0.3) +
       theme_minimal(base_size = 13) +
       theme(
         plot.title = element_text(face = "bold"),
@@ -1160,19 +1234,21 @@ utilization_visual <- function(dt_util,
     p <- ggplot(dt_util, aes(x = factor(hour))) +
       geom_boxplot(
         aes(
-          ymin = min_prop,
+          ymin = pmax(min_prop, q1_prop - (1.5*(q3_prop - q1_prop))),
           lower = q1_prop,
           middle = median_prop,
           upper = q3_prop,
-          ymax = max_prop
+          ymax = q3_prop + (1.5*(q3_prop - q1_prop))
         ),
         stat = "identity",
         fill = "skyblue",
         alpha = 0.4
       ) +
+      scale_y_continuous(labels = scales::percent_format()) +
+      coord_cartesian(ylim = c(0, 0.25)) +
       labs(
         x = "Hour of Day",
-        y = "Proportion",
+        y = "Utilization Rate (%)",
         title = title
       ) +
       theme_minimal(base_size = 13) +
@@ -1180,7 +1256,7 @@ utilization_visual <- function(dt_util,
         plot.title = element_text(face = "bold"))
         
     # --- Add annotation about sample size ---
-    if (!is.null(n_col)) {
+    if (!is.null(n_col) & legend == TRUE) {
       n_values <- dt_util[[n_col]]
       n_min <- min(n_values, na.rm = TRUE)
       n_max <- max(n_values, na.rm = TRUE)
@@ -1299,7 +1375,7 @@ write.csv(hourly_summary_hboot,"C:/Users/santar_r/Documents/Rudolph_local/Datase
 ```
 
 
-```{r visualization of cross-sectional data across the 5 methods}
+```{r visualization of cross-sectional data across the 5 methods, fig.width=18, fig.height=6}
 utilization_visual(hourly_summary, title = "Hourly distibution of all utilization rates")
 utilization_visual(hourly_summary, line = FALSE, title = "Hourly distibution of all utilization rates")
 utilization_visual(hourly_summary_agg, title = "Hourly distribution of mean utilization rates")
@@ -1310,7 +1386,365 @@ utilization_visual(hourly_summary_boot, title = "Hourly bootstrapped distributio
 utilization_visual(hourly_summary_boot, line = FALSE, title = "Hourly bootstrapped distribution of mean utilization rates")
 utilization_visual(hourly_summary_hboot, title = "Hourly hierarchal bootstrapped distribution of mean utilization rates")
 utilization_visual(hourly_summary_hboot, line = FALSE, title = "Hourly hierarchal bootstrapped distribution of mean utilization rates")
+
+#grouped boxplot
+hourly_summary$method        <- "cross-sectional"
+hourly_summary_agg$method    <- "means"
+hourly_summary_agg_max$method<- "maximums"
+hourly_summary_boot$method   <- "bootstrapped"
+hourly_summary_hboot$method  <- "hierarchal-bootstrapped"
+
+df_all <- bind_rows(
+  hourly_summary,
+  hourly_summary_agg,
+  hourly_summary_agg_max,
+  hourly_summary_boot,
+  hourly_summary_hboot
+)
+
+df_all$hour   <- factor(df_all$hour, levels = 0:23)
+df_all$method <- factor(df_all$method, 
+                        levels = c("cross-sectional", "means", "maximums", "bootstrapped", "hierarchal-bootstrapped"))
+
+df_all <- df_all %>%
+  mutate(
+    hour_num = as.numeric(as.character(hour)),  # numeric hours
+    method = factor(method, levels = c("cross-sectional", "means", "maximums", "bootstrapped", "hierarchal-bootstrapped"))
+  )
+
+# Assign horizontal offsets for the 5 methods
+method_offsets <- c("cross-sectional" = -0.4, "means" = -0.2, "maximums" = 0, "bootstrapped" = 0.2, "hierarchal-bootstrapped" = 0.4)
+df_all <- df_all %>%
+  mutate(dodge_x = hour_num + method_offsets[method])
+
+#plot
+ggplot(df_all, aes(x = hour, fill = method)) +
+  geom_boxplot(aes(ymin   = pmax(min_prop, q1_prop - (1.5*(q3_prop - q1_prop))),
+                   lower  = q1_prop,
+                   middle = median_prop,
+                   upper  = q3_prop,
+                   ymax   = q3_prop + (1.5*(q3_prop - q1_prop))),
+               # outliers = FALSE,
+               stat = "identity",
+               position = position_dodge(0.9),
+               alpha = 0.7) +
+  scale_fill_brewer(palette = "Set2") +
+  scale_x_discrete(expand = expansion(mult = c(0.02, 0.02))) +
+  labs(
+    title = "Hourly Utilization Distributions Across Sampling Methods",
+    x = "Hour of Day",
+    y = "Utilization Rate (%)",
+    fill = "Method"
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  coord_cartesian(ylim = c(0, 0.25)) +
+  # theme_minimal(base_size = 13) +
+  theme_classic() +
+  theme(plot.title = element_text(face = "bold"),
+        axis.title.x = element_text(size = 14),                   
+        axis.title.y = element_text(size = 14),                   
+        axis.text.x  = element_text(size = 12),                   
+        axis.text.y  = element_text(size = 12),   
+        legend.position = "bottom",
+        plot.margin = margin(10,20,10,20))
+
+ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/five_sampling_methods_distribution.png", width = 14,height = 6,dpi = 300)
+
+
+# Alternative: Plot IQRs as bars
+# ggplot(df_all, aes(x = dodge_x, fill = method)) +
+#   geom_rect(
+#     aes(
+#       xmin = dodge_x - 0.15,  # width of each bar
+#       xmax = dodge_x + 0.15,
+#       ymin = q1_prop,
+#       ymax = q3_prop
+#     ),
+#     color = NA,
+#     alpha = 0.7
+#   ) +
+#   scale_x_continuous(
+#     breaks = 0:23,
+#     labels = 0:23
+#   ) +
+#   scale_fill_brewer(palette = "Set2") +
+#   labs(
+#     title = "Hourly Utilization IQRs Across Sampling Methods",
+#     x = "Hour of Day",
+#     y = "Utilization Rate",
+#     fill = "Method"
+#   ) +
+#   coord_cartesian(ylim = c(0, 0.3)) +
+#   theme_classic(base_size = 13) +
+#   theme(
+#     plot.title = element_text(face = "bold"),
+#     legend.position = "bottom",
+#     plot.margin = margin(10, 20, 10, 20)
+#   )
 ```
+
+#Visualize weekday and weekend hourly utilization rates
+```{r weekdays}
+hours <- 0:23
+
+# Initialize lists to store results per hour
+stats_list       <- vector("list", length(hours))
+# boot_list        <- vector("list", length(hours))
+# agg_list         <- vector("list", length(hours))
+# agg_max_list     <- vector("list", length(hours))
+# hboot_list       <- vector("list", length(hours))
+
+for (h in hours) {
+  cat("Processing hour", h, "...\n")
+  
+  # --- Load data filtered for this hour ---
+  dt_hour <- load_filter_charging_dt_parallel(
+    chg_avail_files,
+    IDs = NULL,
+    year = NULL,
+    month = NULL,
+    day = NULL,
+    wday = c(1,2,3,4,5),
+    hour = h, # filter by this hour
+    minute = NULL,
+    existing_dt = NULL,
+    n_cores = 4,
+    mem_efficient = TRUE)
+  
+  # If no rows returned, create NA row
+  if (nrow(dt_hour) == 0) {
+    placeholder <- data.table(matrix(NA_real_, nrow = 1, ncol = 11))
+    colnames(placeholder) <- c("N","min_prop","q1_prop","median_prop","mean_prop",
+                               "q3_prop","max_prop","sd_prop","ci95_low","ci95_high","hour")
+    stats_list[[h + 1]]   <- copy(placeholder)
+    boot_list[[h + 1]]    <- copy(placeholder)
+    agg_list[[h + 1]]     <- copy(placeholder)
+    agg_max_list[[h + 1]] <- copy(placeholder)
+    hboot_list[[h + 1]]   <- copy(placeholder)
+    next
+  }
+  
+  # --- Create summary_dt for this hour ---
+  summary_dt_h <- dt_hour[, .(prop_occupied = mean(EVSEStatus == "Occupied")), by = datetime]
+  summary_dt_h[, hour := as.integer(format(datetime, "%H"))]
+  
+  # --- Apply your summary functions ---
+  stats_list[[h + 1]]       <- summary_dt_h[, compute_stats(prop_occupied), by = hour] #data.table(compute_stats(summary_dt_b$prop_occupied), hour = 1)
+  # boot_list[[h + 1]]        <- bootstrapped_hourly_summary(summary_dt_h, n_boot = 1000) #data.table(bootstrapped_hourly_summary(summary_dt, n_boot = 1000), hour = h)
+  # agg_list[[h + 1]]         <- daily_hourly_summary(summary_dt_h) #data.table(daily_hourly_summary(summary_dt), hour = h)
+  # agg_max_list[[h + 1]]     <- daily_hourly_summary_max(summary_dt_h) #data.table(daily_hourly_summary_max(summary_dt), hour = h)
+  # hboot_list[[h + 1]]       <- hierarchical_hourly_bootstrap(summary_dt_h) #data.table(hierarchical_hourly_bootstrap(summary_dt), hour = h)
+  
+  # Clean up to save memory
+  rm(dt_hour, summary_dt_h)
+  gc()
+}
+
+# --- Combine hourly results into final 5 tables ---
+hourly_summary_WKday       <- rbindlist(stats_list, use.names = TRUE, fill = TRUE)
+
+#visualize
+utilization_visual(hourly_summary_WKday, title = "Hourly distibution of utilization rates for weekends")
+
+#Manuscript FIGURE
+utilization_visual(hourly_summary_WKday, line = FALSE, legend = FALSE, title = "Hourly distibution of utilization rates for weekdays") 
+ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/weekday_utilization_crosssection.png", width = 8,height = 6,dpi = 300)
+
+
+cat("All hourly summaries completed.\n")
+```
+
+```{r weekends}
+hours <- 0:23
+
+# Initialize lists to store results per hour
+stats_list       <- vector("list", length(hours))
+# boot_list        <- vector("list", length(hours))
+# agg_list         <- vector("list", length(hours))
+# agg_max_list     <- vector("list", length(hours))
+# hboot_list       <- vector("list", length(hours))
+
+for (h in hours) {
+  cat("Processing hour", h, "...\n")
+  
+  # --- Load data filtered for this hour ---
+  dt_hour <- load_filter_charging_dt_parallel(
+    chg_avail_files,
+    IDs = NULL,
+    year = NULL,
+    month = NULL,
+    day = NULL,
+    wday = c(6,7),
+    hour = h, # filter by this hour
+    minute = NULL,
+    existing_dt = NULL,
+    n_cores = 4,
+    mem_efficient = TRUE)
+  
+  # If no rows returned, create NA row
+  if (nrow(dt_hour) == 0) {
+    placeholder <- data.table(matrix(NA_real_, nrow = 1, ncol = 11))
+    colnames(placeholder) <- c("N","min_prop","q1_prop","median_prop","mean_prop",
+                               "q3_prop","max_prop","sd_prop","ci95_low","ci95_high","hour")
+    stats_list[[h + 1]]   <- copy(placeholder)
+    boot_list[[h + 1]]    <- copy(placeholder)
+    agg_list[[h + 1]]     <- copy(placeholder)
+    agg_max_list[[h + 1]] <- copy(placeholder)
+    hboot_list[[h + 1]]   <- copy(placeholder)
+    next
+  }
+  
+  # --- Create summary_dt for this hour ---
+  summary_dt_h <- dt_hour[, .(prop_occupied = mean(EVSEStatus == "Occupied")), by = datetime]
+  summary_dt_h[, hour := as.integer(format(datetime, "%H"))]
+  
+  # --- Apply your summary functions ---
+  stats_list[[h + 1]]       <- summary_dt_h[, compute_stats(prop_occupied), by = hour] #data.table(compute_stats(summary_dt_b$prop_occupied), hour = 1)
+  # boot_list[[h + 1]]        <- bootstrapped_hourly_summary(summary_dt_h, n_boot = 1000) #data.table(bootstrapped_hourly_summary(summary_dt, n_boot = 1000), hour = h)
+  # agg_list[[h + 1]]         <- daily_hourly_summary(summary_dt_h) #data.table(daily_hourly_summary(summary_dt), hour = h)
+  # agg_max_list[[h + 1]]     <- daily_hourly_summary_max(summary_dt_h) #data.table(daily_hourly_summary_max(summary_dt), hour = h)
+  # hboot_list[[h + 1]]       <- hierarchical_hourly_bootstrap(summary_dt_h) #data.table(hierarchical_hourly_bootstrap(summary_dt), hour = h)
+  
+  # Clean up to save memory
+  rm(dt_hour, summary_dt_h)
+  gc()
+}
+
+# --- Combine hourly results into final 5 tables ---
+hourly_summary_WKend       <- rbindlist(stats_list, use.names = TRUE, fill = TRUE)
+
+#visualize
+utilization_visual(hourly_summary_WKend, title = "Hourly distibution of all utilization rates")
+#Manuscript FIGURE
+utilization_visual(hourly_summary_WKend, line = FALSE, legend = FALSE, title = "Hourly distibution of utilization rates for weekends") 
+ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/weekend_utilization_crosssection.png", width = 8,height = 6,dpi = 300)
+
+cat("All hourly summaries completed.\n")
+```
+
+#Utilization Rate Validation against Gellrich et al. (2022)
+```{r}
+chg_dt_september <- load_filter_charging_dt_parallel(chg_avail_files,
+                                                     IDs = NULL,
+                                                     year = NULL,
+                                                     month = 9,
+                                                     day = NULL,
+                                                     wday = NULL,
+                                                     hour = NULL, # filter by this hour
+                                                     minute = NULL,
+                                                     existing_dt = NULL,
+                                                     n_cores = 4,
+                                                     mem_efficient = TRUE,
+                                                     prefilter = TRUE)
+
+chg_dt_october <- load_filter_charging_dt_parallel(chg_avail_files,
+                                                   IDs = NULL,
+                                                   year = NULL,
+                                                   month = 10,
+                                                   day = NULL,
+                                                   wday = NULL,
+                                                   hour = NULL, # filter by this hour
+                                                   minute = NULL,
+                                                   existing_dt = NULL,
+                                                   n_cores = 4,
+                                                   mem_efficient = TRUE,
+                                                   prefilter = TRUE)
+
+chg_dt_december <- load_filter_charging_dt_parallel(chg_avail_files,
+                                                    IDs = NULL,
+                                                    year = NULL,
+                                                    month = 12,
+                                                    day = NULL,
+                                                    wday = NULL,
+                                                    hour = NULL, # filter by this hour
+                                                    minute = NULL,
+                                                    existing_dt = NULL,
+                                                    n_cores = 4,
+                                                    mem_efficient = TRUE,
+                                                    prefilter = TRUE)
+```
+
+```{r plot data from same months for technical validation, fig.width=12, fig.height=6}
+chg_dt_sample <- rbind(chg_dt_september, chg_dt_october, chg_dt_december)
+chg_dt_sample <- chg_dt_sample[, .(utilization = mean(EVSEStatus == "Occupied")), by = datetime]
+# -------------------------------------------------------
+# YOUR INPUT DATA
+# Assumed structure:
+#   datetime : POSIXct timestamp
+#   utilization : numeric utilization rate (%)
+# -------------------------------------------------------
+
+# Example:
+# dt <- fread("your_real_data.csv")
+# dt[, datetime := as.POSIXct(datetime, tz = "UTC")]
+
+
+# Extract required fields
+chg_dt_sample[, `:=`(
+  month = lubridate::month(datetime, label = TRUE, abbr = FALSE),
+  hour  = hour(datetime),
+  min   = minute(datetime),
+  date  = as.Date(datetime, tz = "Europe/Zurich"),
+  wday  = lubridate::wday(datetime, label = TRUE, week_start = 1)
+)]
+
+# Identify weekends (Saturday & Sunday)
+chg_dt_sample[, weekday_type := ifelse(wday %in% c("Sat", "Sun"), "Weekend", "Weekday")]
+
+# Filter for Sep, Oct, Dec
+# dt3 <- dt[month %in% c("Sep", "Oct", "Dec")]
+
+
+# -------------------------------------------------------
+# Plot: 24-hour profiles for each day in Sep/Oct/Dec
+# Colored by Weekday/Weekend
+# Faceted by month with 72-hour total x-axis (3×24h)
+# -------------------------------------------------------
+
+# Create a 0–24 hour index that repeats for each month
+chg_dt_sample[, hour_index := hour] 
+plot_sample <- chg_dt_sample %>%
+  filter(hour_index == 0) %>%
+  mutate(hour_index = 24)
+plot_sample <- rbind(chg_dt_sample,plot_sample) %>%
+  filter(min == 0)
+
+#Manuscript Figure
+ggplot() +
+  geom_line(data = plot_sample, 
+            aes(x = hour_index, y = utilization,
+                group = interaction(date, weekday_type),
+                color = weekday_type), alpha = 0.5, linewidth = 0.4) +
+  facet_wrap(~ month, ncol = 1, scales = "free_x") +
+  # geom_ribbon(data = september_wk, 
+  #             aes(x = hour_rounded, ymax = max_util, ymin = min_util), fill = "lightblue", alpha = 0.7) +
+  # geom_ribbon(data = september_we, 
+  #             aes(x = hour_rounded, ymax = max_util, ymin = min_util), fill = "orange", alpha = 0.7) +
+  scale_x_continuous(
+    limits = c(0,24),
+    breaks = seq(0, 24, by = 4),
+    labels = function(x) sprintf("%02d:00", x),
+    expand = c(0,0)) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_color_manual(values = c("Weekday" = "#1B9E77", 
+                                "Weekend" = "#D95F02")) +
+  labs(title = "Hourly Utilization Rates – Weekdays vs Weekends",
+       subtitle = "All days in September, October, and December",
+       x = "Hour of Day",
+       y = "Utilization (%)",
+       color = "Day Type") +
+  coord_cartesian(ylim = c(0, 0.25), xlim = c(0,24)) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 12),
+        plot.title = element_text(face = "bold"))
+  
+
+# ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/Sep_Oct_Dec-Utilization.png", width = 10,height = 8,dpi = 300)
+
+plot_sample
+```
+
 
 #Subsets of data
 ```{r Utilization rate of 2023 Data}
@@ -1763,7 +2197,40 @@ imputed_missing_load <- global_na_worst$NA_max*global_na_worst$mean_EVSE
 pct_NA_load <- imputed_missing_load/global_na_worst$max_load
 ```
 
+```{r load charging datasets}
+if(exists("all_month_load")) rm(all_month_load)
+chg_folder <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVLoad-Data_CSV")
 
+for(month in list.files(chg_folder)) {
+  this_path <- file.path(chg_folder, month) 
+  this_month <- read.csv(this_path) %>%
+    select(-1) %>% #remove the index column
+    mutate(date <- as.Date(date))
+  if(!exists("all_month_load")) {
+    all_month_load <- this_month
+  } else {
+    all_month_load <- rbind(all_month_load, this_month)
+  }
+}
+```
+
+```{r visualize load profile}
+chg_load_dt <- setDT(all_month_load) 
+chg_load_dt <- chg_load_dt[minute == 0]
+chg_load_dt[ , date := as.factor(date)]
+
+ggplot(chg_load_dt, aes(x = hour, y = mean_EVSE, color = date, group = date)) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = 0:23) +
+  labs(
+    title = "Hourly Load (mean_EVSE)",
+    x = "Hour of Day",
+    y = "mean_EVSE"
+  ) +
+  theme_minimal() + 
+  theme(legend.position = "none")
+```
 
 
 

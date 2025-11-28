@@ -1,0 +1,131 @@
+---
+title: "Recreating Utilization Curve"
+author: "R Santarromana"
+date: "2025-11-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+```
+
+##extracted data from Figure 2 of Gellrich et al. (2022). 
+```{r}
+Gellrich_data <- read.csv("M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/gellrich_extracted_data.csv")
+
+Gellrich_data
+ggplot(Gellrich_data, aes(x = X, y = Y, color = Day, group = Day)) +
+  geom_line()
+```
+
+
+```{r}
+Gellrich_data_formatted <- Gellrich_data %>%
+  transmute(hour = X %% 24,
+            week = 1 + (X %/% 24), 
+            month = case_match(week,
+                               1 ~ "September",
+                               2 ~ "September", 
+                               3 ~ "October",
+                               4 ~ "December",
+                               5 ~ "December"),
+            utilization = Y,
+            day = Day,
+            weekday_type = case_match(day,
+                                      c("Monday","Tuesday","Wednesday","Thursday","Friday") ~ "Weekday",
+                                      c("Saturday","Sunday") ~ "Weekend"))
+
+Gellrich_data_formatted
+
+ggplot(Gellrich_data_formatted, aes(x = hour, y = utilization, color = day, group = month)) +
+  geom_line()
+  
+```
+
+
+```{r, fig.width=12, fig.height=6}
+#Manuscript Figure
+ggplot() +
+  geom_line(data = Gellrich_data_formatted, 
+            aes(x = hour, y = utilization,
+                group = interaction(week, day, weekday_type),
+                color = weekday_type), alpha = 0.5, linewidth = 0.4) +
+  facet_wrap(~ month, ncol = 1, scales = "free_x") +
+  # geom_ribbon(data = september_wk, 
+  #             aes(x = hour_rounded, ymax = max_util, ymin = min_util), fill = "lightblue", alpha = 0.7) +
+  # geom_ribbon(data = september_we, 
+  #             aes(x = hour_rounded, ymax = max_util, ymin = min_util), fill = "orange", alpha = 0.7) +
+  scale_x_continuous(
+    limits = c(0,24),
+    breaks = seq(0, 24, by = 4),
+    labels = function(x) sprintf("%02d:00", x),
+    expand = c(0,0)) 
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_color_manual(values = c("Weekday" = "#1B9E77", 
+                                "Weekend" = "#D95F02")) +
+  labs(title = "Hourly Utilization Rates – Weekdays vs Weekends",
+       subtitle = "All days in September, October, and December",
+       x = "Hour of Day",
+       y = "Utilization (%)",
+       color = "Day Type") +
+  coord_cartesian(ylim = c(0, 0.25), xlim = c(0,24)) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 12),
+        plot.title = element_text(face = "bold"))
+  
+
+# ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/Sep_Oct_Dec-Utilization.png", width = 10,height = 8,dpi = 300)
+```
+
+```{r september}
+Gellrich_data_formatted
+september_wk <- Gellrich_data_formatted %>%
+  filter(day %in% c("Monday", "Tuesday", "Wednesday", "Thursday","Friday"),
+         month == "September") %>%
+  mutate(hour_rounded = round(hour, 0)) %>%
+  group_by(hour_rounded) %>%
+  summarise(max_util = max(utilization, na.rm = TRUE),
+            min_util = min(utilization, na.rm = TRUE), 
+            .groups = "drop")
+
+september_we <- Gellrich_data_formatted %>%
+  filter(day %in% c("Saturday","Sunday"),
+         month == "September") %>%
+  mutate(hour_rounded = round(hour, 0)) %>%
+  group_by(hour_rounded) %>%
+  summarise(max_util = max(utilization, na.rm = TRUE),
+            min_util = min(utilization, na.rm = TRUE), 
+            .groups = "drop")
+
+ggplot() +
+  geom_ribbon(data = september_wk, aes(x = hour_rounded, ymax = max_util, ymin = min_util), fill = "lightblue", alpha = 0.7) +
+  geom_ribbon(data = september_we, aes(x = hour_rounded, ymax = max_util, ymin = min_util), fill = "orange", alpha = 0.7)
+```
+
+```{r october}
+
+october_wk <- Gellrich_data_formatted %>%
+  filter(day %in% c("Monday", "Tuesday", "Wednesday", "Thursday","Friday"),
+         month == "October") %>%
+  mutate(hour_rounded = round(hour, 0)) %>%
+  group_by(hour_rounded) %>%
+  summarise(max_util = max(utilization, na.rm = TRUE),
+            min_util = min(utilization, na.rm = TRUE), 
+            .groups = "drop")
+
+october_we <- Gellrich_data_formatted %>%
+  filter(day %in% c("Saturday","Sunday"),
+         month == "October") %>%
+  mutate(hour_rounded = round(hour, 0)) %>%
+  group_by(hour_rounded) %>%
+  summarise(max_util = max(utilization, na.rm = TRUE),
+            min_util = min(utilization, na.rm = TRUE), 
+            .groups = "drop")
+
+ggplot() +
+  geom_ribbon(data = october_wk, aes(x = hour_rounded, ymax = max_util, ymin = min_util), fill = "lightblue", alpha = 0.7) +
+  geom_ribbon(data = october_we, aes(x = hour_rounded, ymax = max_util, ymin = min_util), fill = "orange", alpha = 0.7)
+```
