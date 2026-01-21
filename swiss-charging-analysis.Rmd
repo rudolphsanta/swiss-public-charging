@@ -19,7 +19,7 @@ library(parallel)
 # charging status file location and list
 charging_data_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data_Parquet")
 
-chg_avail_files <- list.files(charging_data_root,full.names = TRUE)
+chg_avail_files <- list.files(charging_data_root,pattern = "\\.parquet$",full.names = TRUE)
 
 ```
 
@@ -339,9 +339,34 @@ load_charging_dt <- function(files_to_load, existing_dt = NULL) {
 ```{r function for loading data}
 # Function to read and filter one file
 process_file <- function(file, IDs = NULL, status = NULL, year = NULL, month = NULL, day = NULL, wday = NULL, hour = NULL, minute = NULL, existing_dt = NULL) {
-  dt <- as.data.table(arrow::read_parquet(file))
+  ###checks for the file
+  if (!file.exists(file)) {
+    message("Skipping missing file: ", file)
+    return(NULL)
+  }
+  finfo <- file.info(file)
+  if (is.na(finfo$size) || finfo$size == 0) {
+    message("Skipping zero-byte parquet file: ", file)
+    return(NULL)
+  }
+  #read the file (safe)
+  dt <- tryCatch(
+    {
+      as.data.table(arrow::read_parquet(file))
+    },
+    error = function(e) {
+      message("Skipping unreadable parquet file: ", file)
+      message("  Reason: ", conditionMessage(e))
+      return(NULL)
+    }
+  )
 
-  if (nrow(dt) == 0 || !"datetime" %in% names(dt)) return(NULL)
+  if (is.null(dt)) return(NULL)
+
+  if (nrow(dt) == 0 || !"datetime" %in% names(dt)) {
+    message("Skipping empty or malformed parquet file: ", file)
+    return(NULL)
+  }
 
   dt <- dt[, .(
     datetime = as.POSIXct(datetime, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Zurich"),
@@ -1436,11 +1461,12 @@ ggplot(df_all, aes(x = hour, fill = method)) +
     y = "Utilization Rate (%)",
     fill = "Method"
   ) +
-  scale_y_continuous(labels = scales::percent_format()) +
+  scale_y_continuous(labels = scales::percent_format(), expand = c(0,0)) +
   coord_cartesian(ylim = c(0, 0.25)) +
   # theme_minimal(base_size = 13) +
   theme_classic() +
   theme(plot.title = element_text(face = "bold"),
+        axis.line = element_line(color = "black"),
         axis.title.x = element_text(size = 14),                   
         axis.title.y = element_text(size = 14),                   
         axis.text.x  = element_text(size = 12),                   
@@ -1547,11 +1573,41 @@ hourly_summary_WKday       <- rbindlist(stats_list, use.names = TRUE, fill = TRU
 utilization_visual(hourly_summary_WKday, title = "Hourly distibution of utilization rates for weekends")
 
 #Manuscript FIGURE
-utilization_visual(hourly_summary_WKday, line = FALSE, legend = FALSE, title = "Hourly distibution of utilization rates for weekdays") 
-ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/weekday_utilization_crosssection.png", width = 8,height = 6,dpi = 300)
+# utilization_visual(hourly_summary_WKday, line = FALSE, legend = FALSE, title = "Hourly distibution of utilization rates for weekdays") 
 
+ggplot(hourly_summary_WKday) +
+  geom_boxplot(aes(x = factor(hour),
+                   ymin   = pmax(min_prop, q1_prop - (1.5*(q3_prop - q1_prop))),
+                   lower  = q1_prop,
+                   middle = median_prop,
+                   upper  = q3_prop,
+                   ymax   = q3_prop + (1.5*(q3_prop - q1_prop))),
+               # outliers = FALSE,
+               stat = "identity",
+               alpha = 0.7, 
+               fill = "steelblue") +
+  scale_fill_brewer(palette = "Set2") +
+  scale_x_discrete(expand = c(0,0)) +
+  labs(title = "",
+       x = "Hour",
+       y = "Weekday Utilization Rate (%)") +
+  scale_y_continuous(labels = scales::percent_format(), expand = c(0,0)) +
+  coord_cartesian(ylim = c(0, 0.25)) +
+  # theme_minimal(base_size = 13) +
+  theme_classic() +
+  theme(plot.title = element_text(face = "bold"),
+        axis.line = element_line(color = "black"),
+        axis.title.x = element_text(size = 14),                   
+        axis.title.y = element_text(size = 14),                   
+        axis.text.x  = element_text(size = 12),                   
+        axis.text.y  = element_text(size = 12),   
+        legend.position = "bottom",
+        plot.margin = margin(10,20,10,20))
+
+ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/weekday_utilization_crosssection2.png", width = 8,height = 6,dpi = 300)
 
 cat("All hourly summaries completed.\n")
+
 ```
 
 ```{r weekends}
@@ -1574,7 +1630,7 @@ for (h in hours) {
     year = NULL,
     month = NULL,
     day = NULL,
-    wday = c(6,7),
+    wday = c(6,7), #weekends
     hour = h, # filter by this hour
     minute = NULL,
     existing_dt = NULL,
@@ -1614,10 +1670,44 @@ for (h in hours) {
 hourly_summary_WKend       <- rbindlist(stats_list, use.names = TRUE, fill = TRUE)
 
 #visualize
-utilization_visual(hourly_summary_WKend, title = "Hourly distibution of all utilization rates")
+# utilization_visual(hourly_summary_WKend, title = "Hourly distibution of all utilization rates")
 #Manuscript FIGURE
-utilization_visual(hourly_summary_WKend, line = FALSE, legend = FALSE, title = "Hourly distibution of utilization rates for weekends") 
-ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/weekend_utilization_crosssection.png", width = 8,height = 6,dpi = 300)
+# utilization_visual(hourly_summary_WKend, line = FALSE, legend = FALSE, title = "Hourly distibution of utilization rates for weekends") 
+
+# ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/weekday_utilization_crosssection.png", width = 8,height = 6,dpi = 300)
+
+
+ggplot(hourly_summary_WKend) +
+  geom_boxplot(aes(x = factor(hour),
+                   ymin   = pmax(min_prop, q1_prop - (1.5*(q3_prop - q1_prop))),
+                   lower  = q1_prop,
+                   middle = median_prop,
+                   upper  = q3_prop,
+                   ymax   = q3_prop + (1.5*(q3_prop - q1_prop))),
+               # outliers = FALSE,
+               stat = "identity",
+               alpha = 0.7, 
+               fill = "steelblue") +
+  scale_fill_brewer(palette = "Set2") +
+  scale_x_discrete(expand = c(0,0)) +
+  labs(title = "",
+       x = "Hour",
+       y = "Weekend Utilization Rate (%)") +
+  scale_y_continuous(labels = scales::percent_format(), expand = c(0,0)) +
+  coord_cartesian(ylim = c(0, 0.25)) +
+  # theme_minimal(base_size = 13) +
+  theme_classic() +
+  theme(plot.title = element_text(face = "bold"),
+        axis.line = element_line(color = "black"),
+        axis.title.x = element_text(size = 14),                   
+        axis.title.y = element_text(size = 14),                   
+        axis.text.x  = element_text(size = 12),                   
+        axis.text.y  = element_text(size = 12),   
+        legend.position = "bottom",
+        plot.margin = margin(10,20,10,20))
+
+
+ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/weekend_utilization_crosssection2.png", width = 8,height = 6,dpi = 300)
 
 cat("All hourly summaries completed.\n")
 ```
@@ -1725,7 +1815,7 @@ ggplot() +
     breaks = seq(0, 24, by = 4),
     labels = function(x) sprintf("%02d:00", x),
     expand = c(0,0)) +
-  scale_y_continuous(labels = scales::percent_format()) +
+  scale_y_continuous(labels = scales::percent_format(), expand = c(0,0)) +
   scale_color_manual(values = c("Weekday" = "#1B9E77", 
                                 "Weekend" = "#D95F02")) +
   labs(title = "Hourly Utilization Rates – Weekdays vs Weekends",
@@ -1740,9 +1830,9 @@ ggplot() +
         plot.title = element_text(face = "bold"))
   
 
-# ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/Sep_Oct_Dec-Utilization.png", width = 10,height = 8,dpi = 300)
+ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/Sep_Oct_Dec-Utilization.png", width = 8,height = 8,dpi = 300)
 
-plot_sample
+# plot_sample
 ```
 
 
@@ -2104,14 +2194,14 @@ for(month_parquet in chg_avail_files) {
   csv_filename <- paste0(org_file_base, "_load.csv")
   csv_filepath <- file.path(output_root, csv_filename)
   
-  # if (file.exists(csv_filepath)) {
-  #   message("File already exists, skipping: ", csv_filepath)
-  #   next
-  #   }
+  if(file.exists(csv_filepath)) {
+    message("File already exists, skipping: ", csv_filepath)
+    next
+    }
   
   month_dt_full <- load_filter_charging_dt_parallel(month_parquet, mem_efficient = TRUE)
   
-  if (is.null(month_dt_full)) {
+  if(is.null(month_dt_full)) {
     message("Empty file, skipping: ", csv_filepath)
     next
     }
@@ -2191,11 +2281,6 @@ final_global_worst <- unique(final_global_worst)
 ```
 
 
-```{r}
-#what percent of load does the hour with the most NA EVSE potentially account for if we impute those NAs with the mean power level?
-imputed_missing_load <- global_na_worst$NA_max*global_na_worst$mean_EVSE
-pct_NA_load <- imputed_missing_load/global_na_worst$max_load
-```
 
 ```{r load charging datasets}
 if(exists("all_month_load")) rm(all_month_load)
@@ -2205,7 +2290,7 @@ for(month in list.files(chg_folder)) {
   this_path <- file.path(chg_folder, month) 
   this_month <- read.csv(this_path) %>%
     select(-1) %>% #remove the index column
-    mutate(date <- as.Date(date))
+    mutate(date <- as.Date(date, tz = "Europe/Zurich"))
   if(!exists("all_month_load")) {
     all_month_load <- this_month
   } else {
@@ -2217,22 +2302,63 @@ for(month in list.files(chg_folder)) {
 ```{r visualize load profile}
 chg_load_dt <- setDT(all_month_load) 
 chg_load_dt <- chg_load_dt[minute == 0]
-chg_load_dt[ , date := as.factor(date)]
+chg_load_dt[ , `:=` (month = as.factor(month(date)),
+                     Year = as.factor(year(date)), 
+                     weekday = lubridate::wday(date, label = TRUE, abbr = FALSE, week_start = 1))]
+chg_load_dt <- chg_load_dt %>%  
+  mutate(day_type = as.factor(case_match(weekday,
+                                         c("Monday","Tuesday","Wednesday","Thursday","Friday") ~ "Weekday",
+                                         c("Saturday","Sunday") ~ "Weekend")))
 
-ggplot(chg_load_dt, aes(x = hour, y = mean_EVSE, color = date, group = date)) +
-  geom_line() +
-  geom_point() +
-  scale_x_continuous(breaks = 0:23) +
+#Manuscript Figure
+ggplot(chg_load_dt) +
+  geom_line(aes(x = hour, y = total_load/1000, color = Year, group = interaction(month,Year,date)), alpha = 0.5) +
+  # xlim(0,23) +
+  # ylim(0,100) +
+  scale_x_continuous(breaks = c(0,4,8,12,16,20), limits = c(0,23), expand = c(0,0)) +
+  scale_y_continuous(limits = c(0, 100), expand = c(0,0)) +
+  scale_color_brewer(palette = "Set1") +
   labs(
-    title = "Hourly Load (mean_EVSE)",
-    x = "Hour of Day",
-    y = "mean_EVSE"
+    title = "",#"Hourly Load",
+    x = "Hour",
+    y = "Charging Load (MW)"
   ) +
-  theme_minimal() + 
-  theme(legend.position = "none")
+  theme_minimal() +  
+  theme(axis.line = element_line(colour = "black"),
+        # panel.border = element_rect(color = "black", fill = NA),
+        axis.text = element_text(size = 12),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        legend.text = element_text(size = 12))
+
+ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/charging_load.png", width = 8,height = 6,dpi = 300)
+
 ```
 
 
+```{r}
+ggplot(chg_load_dt) +
+  geom_line(aes(x = hour, y = (max_load + max_imputed)/1000, color = Year, group = interaction(month,Year,date)), alpha = 0.5) +
+  # xlim(0,23) +
+  # ylim(0,100) +
+  scale_x_continuous(breaks = c(0,4,8,12,16,20), limits = c(0,23), expand = c(0,0)) +
+  scale_y_continuous(limits = c(0, 100), expand = c(0,0)) +
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    title = "",#"Hourly Load",
+    x = "Hour",
+    y = "Charging Load (MW)"
+  ) +
+  theme_minimal() +  
+  theme(axis.line = element_line(colour = "black"),
+        # panel.border = element_rect(color = "black", fill = NA),
+        axis.text = element_text(size = 12),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        legend.text = element_text(size = 12))
+```
 
 
 

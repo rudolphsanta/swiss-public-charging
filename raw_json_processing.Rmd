@@ -21,7 +21,8 @@ library(lubridate)
 #Locations of the main folders for input and output.
 
 ##All the raw data are collected and stored here
-raw_data_root <- file.path("P:/Rudolph/Swiss-EVChg-Data") #there are monthly folders in this directory
+# raw_data_root <- file.path("P:/Rudolph/Swiss-EVChg-Data") #there are monthly folders in this directory
+raw_data_root <- file.path("M:/Rudolph/0-Datasets/Switzerland/Swiss-EVChg-Data")
 
 output_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data_CSV")
 

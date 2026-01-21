@@ -37,10 +37,13 @@ Gellrich_data_formatted <- Gellrich_data %>%
                                       c("Monday","Tuesday","Wednesday","Thursday","Friday") ~ "Weekday",
                                       c("Saturday","Sunday") ~ "Weekend"))
 
-Gellrich_data_formatted
+# Gellrich_data_formatted
 
-ggplot(Gellrich_data_formatted, aes(x = hour, y = utilization, color = day, group = month)) +
-  geom_line()
+# ggplot(Gellrich_data_formatted, aes(x = hour, y = utilization, color = day, group = month)) +
+#   geom_line()
+
+Gellrich_data_formatted$month <- factor(Gellrich_data_formatted$month,
+                                        levels = c("September", "October", "December"))
   
 ```
 
@@ -49,7 +52,7 @@ ggplot(Gellrich_data_formatted, aes(x = hour, y = utilization, color = day, grou
 #Manuscript Figure
 ggplot() +
   geom_line(data = Gellrich_data_formatted, 
-            aes(x = hour, y = utilization,
+            aes(x = hour, y = utilization/100,
                 group = interaction(week, day, weekday_type),
                 color = weekday_type), alpha = 0.5, linewidth = 0.4) +
   facet_wrap(~ month, ncol = 1, scales = "free_x") +
@@ -61,11 +64,11 @@ ggplot() +
     limits = c(0,24),
     breaks = seq(0, 24, by = 4),
     labels = function(x) sprintf("%02d:00", x),
-    expand = c(0,0)) 
-  scale_y_continuous(labels = scales::percent_format()) +
+    expand = c(0,0)) +
+  scale_y_continuous(labels = scales::percent_format(), expand = c(0,0)) +
   scale_color_manual(values = c("Weekday" = "#1B9E77", 
                                 "Weekend" = "#D95F02")) +
-  labs(title = "Hourly Utilization Rates – Weekdays vs Weekends",
+  labs(title = "Hourly Utilization Rates – Weekdays vs Weekends - Validation",
        subtitle = "All days in September, October, and December",
        x = "Hour of Day",
        y = "Utilization (%)",
@@ -77,7 +80,8 @@ ggplot() +
         plot.title = element_text(face = "bold"))
   
 
-# ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/Sep_Oct_Dec-Utilization.png", width = 10,height = 8,dpi = 300)
+ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/Sep_Oct_Dec-Validation.png", width = 8,height = 8,dpi = 300)
+
 ```
 
 ```{r september}
