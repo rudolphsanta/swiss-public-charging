@@ -26,7 +26,7 @@ chg_avail_files <- list.files(charging_data_root,pattern = "\\.parquet$",full.na
 
 # Charging point descriptions
 ```{r Charging Point Details}
-CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/ChargingStationDetails_10-10-2025.csv",
+CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/ChargingStationDetails_19-02-2026.csv",
                             colClasses = c(
                               # DynamicInfoAvailable = "character",
                               IsOpen24Hours = "logical",
@@ -39,10 +39,11 @@ CH_EVSE_details <- read.csv("M:/Rudolph/R-Projects/swiss-public-charging/data/Ch
   # select(EvseID,ChargingStationId,Accessibility,GeoCoordinates,City,Country,PostalCode,Street,IsOpen24Hours,LastUpdate,DynamicInfoAvailable,DynamicPowerLevel,ChargingFacility_power,ChargingFacility_powertype) %>%
   separate(GeoCoordinates, into = c("latitude", "longitude"), sep = " ", convert = TRUE)
 
+sum(CH_EVSE_details$longitude > 180, na.rm = TRUE)
 summary(CH_EVSE_details)
-dim(CH_EVSE_details)
+dim(CH_EVSE_details) #18299 rows
 
-CH_EVSE_details$LastUpdate <- ymd_hms(CH_EVSE_details$LastUpdate, tz = "UTC")
+CH_EVSE_details$LastUpdate <- ymd_hms(CH_EVSE_details$LastUpdate, tz = "Europe/Zurich")
 
 #convert longitude and latitude to NA if they fall outside of the country extents
 CH_EVSE_details$longitude <- ifelse(
@@ -55,11 +56,29 @@ CH_EVSE_details$latitude <- ifelse(
   CH_EVSE_details$latitude,
   NA)
 
+CH_EVSE_details <- CH_EVSE_details %>%
+  filter(!is.na(longitude) & !is.na(latitude))
+
+dim(CH_EVSE_details) #18155 rows. 144 rows eliminated
 #remove any rows that are EXACT duplicates (duplicated across all columns)
+duplicated_rows <- CH_EVSE_details[duplicated(CH_EVSE_details), ]
+
+duplicated_rows_all <- CH_EVSE_details %>%
+  group_by(across(everything())) %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+duplicated_summary <- CH_EVSE_details %>%
+  group_by(across(everything())) %>%
+  summarise(dup_count = n(), .groups = "drop") %>%
+  filter(dup_count > 1)
+
+summary(duplicated_summary$dup_count)
+
 CH_EVSE_details <- CH_EVSE_details[!duplicated(CH_EVSE_details), ]
 
 summary(CH_EVSE_details)
-dim(CH_EVSE_details)
+dim(CH_EVSE_details) #17893 rows. 262 more rows eliminated
 
 #write.csv(CH_EVSE_details, "M:/Rudolph/R-Projects/swiss-public-charging/charging_stations_cleaned_2025-07.csv")
 
@@ -72,6 +91,7 @@ dim(CH_EVSE_details)
 library(lsr)    # for etaSquared
 library(vcd)    # for assocstats (Cramer's V)
 library(dplyr)
+library(corrplot)
 
 # Subset relevant variables
 df <- CH_EVSE_details %>%
@@ -161,6 +181,7 @@ CH_EVSE_details_AC1 <- filter(CH_EVSE_details, ChargingFacility_powertype == "AC
 summary(CH_EVSE_details_AC1)
 ```
 ```{r summarize missing}
+#Table
 summary_missing <- sapply(CH_EVSE_details, function(x) {
   # Start with NAs
   missing_count <- sum(is.na(x))
@@ -180,6 +201,9 @@ summary_missing <- sapply(CH_EVSE_details, function(x) {
 
 summary_missing <- sort(summary_missing, decreasing = TRUE)
 print(summary_missing)
+
+# summary(CH_EVSE_details$ChargingFacility_power)
+# sum(CH_EVSE_details$ChargingFacility_power == 0, na.rm = TRUE)
 ```
 
 
@@ -684,7 +708,7 @@ Removed/Total
 
 
 
-```{r generate a single typical day set of data for a selected power level of charger}
+```{r generate a single typical day set of data for a selected power level of charger - DELETE}
 system.time({
   # summary(mid_power_EVSE)
 
@@ -1127,7 +1151,7 @@ h_bootstrapped_hourly_samples <- function(dt, hr, n_boot = NULL, seed = 123) {
 
 ```
 
-```{r Sample distributions of one hour}
+```{r Sample distributions of one hour - DETELE Unnecessary}
 crosssection <- summary_dt[hour == 12, prop_occupied]
 mean_hourly <- daily_mean_sample(summary_dt, hr = 12)
 max_hourly <- daily_max_sample(summary_dt, hr = 12)
@@ -1604,7 +1628,7 @@ ggplot(hourly_summary_WKday) +
         legend.position = "bottom",
         plot.margin = margin(10,20,10,20))
 
-ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/weekday_utilization_crosssection2.png", width = 8,height = 6,dpi = 300)
+ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/weekday_utilization_crosssection3.png", width = 8,height = 6,dpi = 300)
 
 cat("All hourly summaries completed.\n")
 
@@ -1707,7 +1731,7 @@ ggplot(hourly_summary_WKend) +
         plot.margin = margin(10,20,10,20))
 
 
-ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/weekend_utilization_crosssection2.png", width = 8,height = 6,dpi = 300)
+ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/weekend_utilization_crosssection3.png", width = 8,height = 6,dpi = 300)
 
 cat("All hourly summaries completed.\n")
 ```
@@ -2213,14 +2237,15 @@ for(month_parquet in chg_avail_files) {
     date = as.Date(datetime),
     hour = as.integer(format(datetime, "%H")),
     minute = as.integer(format(datetime, "%M")))]
-
-    load_minute_dt <- chg_dt_load[, {
+    
+  load_minute_dt <- chg_dt_load[, {
     total_load_val <- sum(ChargingFacility_power, na.rm = TRUE)
     count_occ_val  <- .N
     NA_sum_val     <- sum(is.na(ChargingFacility_power))
     mean_EVSE_val  <- mean(ChargingFacility_power, na.rm = TRUE)
     mean_imputed_val <- NA_sum_val * mean_EVSE_val
     .(total_load = total_load_val,
+      # total_elc_kWh = total_load/20, #for 5-minute intervals, this is the integral
       count_occ  = count_occ_val,
       NA_sum     = NA_sum_val,
       pct_NA_points = NA_sum_val / (count_occ_val + NA_sum_val),
@@ -2283,20 +2308,32 @@ final_global_worst <- unique(final_global_worst)
 
 
 ```{r load charging datasets}
-if(exists("all_month_load")) rm(all_month_load)
+# if(exists("all_month_load")) rm(all_month_load) #Start from scratch
 chg_folder <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVLoad-Data_CSV")
 
 for(month in list.files(chg_folder)) {
+  # Extract year-month from filename e.g. "2025-10_charging_load.csv" -> "2025-10"
+  file_month <- sub("^(\\d{4}-\\d{2})_.*\\.csv$", "\\1", month)
+  
+  # Skip if this month is already loaded
+  if(exists("all_month_load") && file_month %in% format(as.Date(all_month_load$date), "%Y-%m")) {
+    message("Skipping ", month, ": already present.")
+    next
+  }
+  
   this_path <- file.path(chg_folder, month) 
   this_month <- read.csv(this_path) %>%
-    select(-1) %>% #remove the index column
-    mutate(date <- as.Date(date, tz = "Europe/Zurich"))
+    select(-1) #%>% #remove the index column
+    # mutate(date = as.Date(date, tz = "Europe/Zurich"))
   if(!exists("all_month_load")) {
     all_month_load <- this_month
   } else {
     all_month_load <- rbind(all_month_load, this_month)
   }
 }
+
+summary(as.Date(all_month_load$date))
+
 ```
 
 ```{r visualize load profile}
@@ -2332,9 +2369,307 @@ ggplot(chg_load_dt) +
         panel.background = element_blank(),
         legend.text = element_text(size = 12))
 
-ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/charging_load.png", width = 8,height = 6,dpi = 300)
+# ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/charging_load.png", width = 8,height = 6,dpi = 300)
 
 ```
+
+```{r charging load validation against overall Swiss load}
+Swiss_ELC_2022 <- readxl::read_excel("M:/Rudolph/R-Projects/swiss-public-charging/data/EnergieUebersichtCH-2022.xlsx", sheet = "Zeitreihen0h15")[-1,] %>%
+  select(1,2) %>%
+  rename("timestamp" = 1, "total_energy_cons_kWh" = 2) %>%
+  mutate(timestamp = as.POSIXct(timestamp, tz = "Europe/Zurich", format = "%d.%m.%Y %H:%M")) %>%
+  group_by(timestamp = floor_date(timestamp, "hour")) %>%
+  summarise(hr_cons_MWh = sum(as.numeric(total_energy_cons_kWh)/1000, na.rm = TRUE),.groups = "drop")
+
+Swiss_ELC_2023 <- readxl::read_excel("M:/Rudolph/R-Projects/swiss-public-charging/data/EnergieUebersichtCH-2023.xlsx", sheet = "Zeitreihen0h15")[-1,] %>%
+  select(1,2) %>%
+  rename("timestamp" = 1, "total_energy_cons_kWh" = 2) %>%
+  mutate(timestamp = as.POSIXct(timestamp, tz = "Europe/Zurich", format = "%d.%m.%Y %H:%M")) %>%
+  group_by(timestamp = floor_date(timestamp, "hour")) %>%
+  summarise(hr_cons_MWh = sum(as.numeric(total_energy_cons_kWh)/1000, na.rm = TRUE),.groups = "drop")
+
+Swiss_ELC_2024 <- readxl::read_excel("M:/Rudolph/R-Projects/swiss-public-charging/data/EnergieUebersichtCH-2024.xlsx", sheet = "Zeitreihen0h15")[-1,] %>%
+  select(1,2) %>%
+  rename("timestamp" = 1, "total_energy_cons_kWh" = 2) %>%
+  mutate(timestamp = as.POSIXct(timestamp, tz = "Europe/Zurich", format = "%d.%m.%Y %H:%M")) %>%
+  group_by(timestamp = floor_date(timestamp, "hour")) %>%
+  summarise(hr_cons_MWh = sum(as.numeric(total_energy_cons_kWh)/1000, na.rm = TRUE),.groups = "drop")
+
+Swiss_ELC_2025 <- readxl::read_excel("M:/Rudolph/R-Projects/swiss-public-charging/data/EnergieUebersichtCH-2025.xlsx", sheet = "Zeitreihen0h15")[-1,] %>%
+  select(1,2) %>%
+  rename("timestamp" = 1, "total_energy_cons_kWh" = 2) %>%
+  mutate(timestamp = as.POSIXct(timestamp, tz = "Europe/Zurich", format = "%d.%m.%Y %H:%M")) %>%
+  group_by(timestamp = floor_date(timestamp, "hour")) %>%
+  summarise(hr_cons_MWh = sum(as.numeric(total_energy_cons_kWh)/1000, na.rm = TRUE),.groups = "drop")
+
+Swiss_ELC_ALL <- rbind(Swiss_ELC_2022, Swiss_ELC_2023, Swiss_ELC_2024, Swiss_ELC_2025)
+```
+
+```{r}
+Swiss_ELC_dt <- rbind(Swiss_ELC_2022, Swiss_ELC_2023, Swiss_ELC_2024, Swiss_ELC_2025) %>%
+  setDT() %>%
+  mutate(
+    date = as.character(as.Date(timestamp, tz = "Europe/Zurich")),
+    hour = as.integer(format(timestamp, "%H"))) %>%
+  group_by(date, hour) %>%
+  summarise(hr_cons_MWh = max(hr_cons_MWh), .groups = "drop") #duplicate hours for daylight savings
+
+
+
+# Swiss_ELC_dt[ , `:=` (date = ymd(timestamp),
+#                       hour = as.integer(hour(timestamp)), 
+#                       minute = as.integer(minute(timestamp)),
+#                       weekday = lubridate::wday(timestamp, label = TRUE, abbr = FALSE, week_start = 1))]
+# 
+# Swiss_ELC_dt <- Swiss_ELC_dt %>%  
+#   mutate(day_type = as.factor(case_match(weekday,
+                                         # c("Monday","Tuesday","Wednesday","Thursday","Friday") ~ "Weekday",
+                                         # c("Saturday","Sunday") ~ "Weekend")))
+
+
+```
+
+
+```{r join charging load with Swiss ELC system load}
+# uniqueN(Swiss_ELC_dt$date)
+# uniqueN(all_month_load$date)
+
+load_hourly <- all_month_load %>%
+  group_by(date, hour) %>%
+  slice(1) %>%
+  ungroup() %>%
+  rename(max_EVload_kWh = max_load)
+
+# Step 2: Right join so Swiss load hours are always retained
+hr_load_all <- load_hourly %>%
+  right_join(
+    Swiss_ELC_dt %>% select(date, hour, hr_cons_MWh),
+    by = c("date", "hour")
+  ) %>%
+  mutate(
+    max_chg_pct_kWh = (max_EVload_kWh / 1000) / hr_cons_MWh
+  ) %>%
+  select(date, hour, max_EVload_kWh, hr_cons_MWh, max_chg_pct_kWh,
+         mean_EVSE, max_occ, max_imputed, max_pct_imputed, NA_max)
+
+summary(hr_load_all)
+```
+
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(patchwork)
+
+df <- hr_load_all
+
+# Add time features if not already present
+df <- df %>%
+  mutate(date = as.Date(date)) %>%
+  mutate(month   = lubridate::month(date, label = TRUE, abbr = TRUE),
+         year    = lubridate::year(date),
+         season  = case_when(
+           lubridate::month(date) %in% c(11, 12, 1) ~ "Winter",
+           lubridate::month(date) %in% c(2, 3, 4)  ~ "Spring",
+           lubridate::month(date) %in% c(5, 6, 7)  ~ "Summer",
+           lubridate::month(date) %in% c(8, 9, 10) ~ "Autumn"),
+         season  = factor(season, levels = c("Winter", "Spring", "Summer", "Autumn")),
+         day_type = if_else(lubridate::wday(date, week_start = 1) <= 5, "Weekday", "Weekend"))
+
+
+# ── Figure 1: Dual-axis time series — EV load & system load ──────────────────
+# Aggregate to daily max for readability over 3 years
+daily <- df %>%
+  mutate(date = as.Date(date)) %>%
+  group_by(date) %>%
+  summarise(
+    # Use NA-aware logic: if ALL hours in the day have NA EV load, result is NA
+    # otherwise take the daily maximum of non-NA values
+    ev_load_mwh  = if_else(
+      all(is.na(max_EVload_kWh)),
+      NA_real_,
+      max(max_EVload_kWh, na.rm = TRUE) / 1000),
+    sys_load_mwh = if_else(
+      all(is.na(hr_cons_MWh)),
+      NA_real_,
+      max(hr_cons_MWh, na.rm = TRUE)),
+    pct_ev = if_else(
+      all(is.na(max_chg_pct_kWh)),
+      NA_real_,
+      max(max_chg_pct_kWh, na.rm = TRUE)),
+    .groups = "drop")
+
+summary(daily)
+
+```
+
+
+```{r manuscript figure}
+primary_breaks   <- seq(0, 10000, by = 2000)
+secondary_breaks <- seq(0, 100,   by = 20)
+
+# Scale factor derived directly from fixed limits
+scale_factor <- 10000 / 100   # = 100
+
+#Plot
+ggplot(data = daily, aes(x = date)) +
+  geom_line(aes(y = sys_load_mwh, colour = "Total System Load"),
+            linewidth = 0.4, alpha = 0.7) +
+  geom_line(aes(y = ev_load_mwh * scale_factor, colour = "EV Charging Load"),
+            linewidth = 0.5, alpha = 0.9) +
+  scale_y_continuous(
+    name    = "Total Swiss System Load (MW)",
+    labels  = comma,
+    breaks  = primary_breaks,
+    limits  = c(0, max(primary_breaks)),
+    expand   = expansion(mult = c(0, 0.02)),  # no padding at bottom, small at top
+    sec.axis = sec_axis(
+      ~ . / scale_factor,
+      name   = "EV Charging Load (MW)",
+      breaks = secondary_breaks,
+      labels = comma(secondary_breaks))) +
+  scale_colour_manual(
+    values = c("Total System Load" = "grey50", "EV Charging Load" = "#D55E00")) +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%b %Y",
+    limits      = as.Date(c("2022-12-01", "2025-12-31")),
+    expand      = c(0, 0)
+  ) +
+  labs(
+    x      = NULL,
+    colour = NULL,
+    title  = "Daily Peak EV Charging Load vs. Total Swiss System Load") +
+  theme_bw(base_size = 11) +
+  theme(
+    legend.position    = "bottom",
+    axis.title.y.right = element_text(colour = "#D55E00"),
+    panel.grid.minor   = element_blank())
+
+```
+
+```{r manuscript figure}
+# ── Figure: EV load as % of system load — full hourly time series ──────────
+# Daily mean % with loess trend
+# Apply same NA-robust daily aggregation
+daily_pct <- df %>%
+  mutate(date = as.Date(date)) %>%
+  group_by(date) %>%
+  summarise(
+    mean_pct = {
+      vals <- max_chg_pct_kWh[!is.na(max_chg_pct_kWh)] * 100
+      if (length(vals) == 0) NA_real_ else mean(vals)},
+    max_pct = {
+      vals <- max_chg_pct_kWh[!is.na(max_chg_pct_kWh)] * 100
+      if (length(vals) == 0) NA_real_ else max(vals)},
+    .groups = "drop")
+
+max_val  <- max(daily_pct$max_pct, na.rm = TRUE)
+max_date <- daily_pct$date[which.max(daily_pct$max_pct)]
+
+ggplot(daily_pct, aes(x = date)) +
+  geom_line(aes(y = max_pct), colour = "grey75", linewidth = 0.35,
+            alpha = 0.6) +
+  # Smooth uses only non-NA rows so it fits continuously over the gap
+  geom_smooth(data = daily_pct %>% filter(!is.na(max_pct)),
+              aes(y = max_pct), method = "loess", span = 0.15,
+              se = TRUE, colour = "#0072B2", fill = "#0072B2",
+              alpha = 0.15, linewidth = 0.9) +
+  annotate("text", x = max_date, y = max_val,
+           label = sprintf("Max: %.2f%%  ", max_val),
+           hjust = 1, vjust = 0, size = 4, colour = "#D55E00") +
+  annotate("point", x = max_date, y = max_val,
+           colour = "#D55E00", size = 2.5) +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%b %Y",
+    limits      = as.Date(c("2022-12-01", "2025-12-31")),
+    expand      = expansion(mult = c(0, 0.01))) +
+  scale_y_continuous(
+    limits = c(0, 2),
+    labels = function(x) paste0(x, "%"),
+    expand = expansion(mult = c(0, 0.02))) +
+  labs(
+    x     = NULL,
+    y     = "EV Charging Load as % of Swiss System Load",
+    title = "EV Charging Load Share of Total Swiss Electricity System Load") +
+  theme_bw(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+
+
+```{r manuscript figure}
+# ── Figure 3: Diurnal % share by season and day type ─────────────────────────
+diurnal <- df %>%
+  filter(
+    date >= as.Date("2022-12-01"),   # exclude pre-dataset dates
+    !is.na(max_chg_pct_kWh)) %>%         # exclude gap months from averages
+  group_by(season, day_type, hour) %>%
+  summarise(
+    mean_pct   = mean(max_chg_pct_kWh * 100, na.rm = TRUE),
+    median_pct = median(max_chg_pct_kWh * 100, na.rm = TRUE),
+    p25        = quantile(max_chg_pct_kWh * 100, 0.25, na.rm = TRUE),
+    p75        = quantile(max_chg_pct_kWh * 100, 0.75, na.rm = TRUE),
+    .groups    = "drop"  )
+
+ggplot(diurnal, aes(x = hour, colour = day_type, fill = day_type)) +
+  geom_ribbon(aes(ymin = p25, ymax = p75), alpha = 0.15, colour = NA) +
+  geom_line(aes(y = mean_pct), linewidth = 0.8) +
+  facet_wrap(~ season, nrow = 2) +
+  scale_x_continuous(
+    breaks = seq(0, 23, by = 4),
+    labels = paste0(seq(0, 23, by = 4), ":00"),
+    limits = c(0, 23),
+    expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    limits = c(0, 1.5),
+    breaks = seq(0, 1.5, by = 0.3),
+    expand = expansion(mult = c(0, 0.02))) +
+  scale_colour_manual(values = c("Weekday" = "#0072B2", "Weekend" = "#E69F00")) +
+  scale_fill_manual(values  = c("Weekday" = "#0072B2", "Weekend" = "#E69F00")) +
+  labs(
+    x      = "Hour of Day",
+    y      = "EV Load as % of Swiss System Load",
+    colour = "Day Type",
+    fill   = "Day Type",
+    title  = "Diurnal Profile of EV Charging Load Share by Season") +
+  theme_bw(base_size = 11) +
+  theme(
+    legend.position  = "bottom",
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "grey92"),
+    panel.spacing    = unit(1.2, "lines"))   # increase spacing between facets
+  
+
+
+```
+
+
+```{r}
+# ── Table: Summary statistics of % share ─────────────────────────────────────
+summary_tbl <- df %>%
+  summarise(
+    `Mean (%)`       = round(mean(max_chg_pct_kWh*100, na.rm = TRUE), 3),
+    `Median (%)`     = round(median(max_chg_pct_kWh*100, na.rm = TRUE), 3),
+    `Std. Dev. (%)`  = round(sd(max_chg_pct_kWh*100, na.rm = TRUE), 3),
+    `95th pct. (%)` = round(quantile(max_chg_pct_kWh*100, 0.95, na.rm = TRUE), 3),
+    `99th pct. (%)` = round(quantile(max_chg_pct_kWh*100, 0.99, na.rm = TRUE), 3),
+    `Max (%)`        = round(max(max_chg_pct_kWh*100, na.rm = TRUE), 3),
+    `N hours > 1%`   = sum(max_chg_pct_kWh*100 > 1, na.rm = TRUE),
+    `N hours > 2%`   = sum(max_chg_pct_kWh*100 > 2, na.rm = TRUE),
+    `Total hours`    = sum(!is.na(max_chg_pct_kWh*100))
+  ) %>%
+  pivot_longer(everything(), names_to = "Statistic", values_to = "Value")
+
+print(summary_tbl)
+# Export if needed:
+# write.csv(summary_tbl, "ev_load_share_summary.csv", row.names = FALSE)
+```
+
 
 
 ```{r}
@@ -2359,6 +2694,285 @@ ggplot(chg_load_dt) +
         panel.background = element_blank(),
         legend.text = element_text(size = 12))
 ```
+
+```{r}
+library(data.table)
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(scales)
+
+# ── Step 1: Monthly EVSE count and utilization rate ──────────────────────────
+# Iterate over years and months, loading each month's data to extract:
+#   - n_evse_total: distinct EVSEs observed (Available + Occupied)
+#   - n_evse_occupied: distinct EVSEs observed as Occupied
+#   - mean_util: mean prop_occupied across all snapshots in the month
+
+expected_months <- data.frame(
+  yr = rep(2022:2025, each = 12),
+  mo = rep(1:12, times = 4)) %>%
+  filter(!(yr == 2022 & mo < 12)) %>%  # start at Dec 2022
+  mutate(key = as.character(paste(yr, mo, sep = "-")))
+
+#find months not already in the list
+already_processed <- as.character(names(monthly_coverage_list))
+months_to_process <- expected_months %>%
+  filter(!key %in% already_processed)
+
+# monthly_coverage_list <- list()
+
+for (yr in years) {
+  for (mo in months) {
+    if (yr == 2022 & mo < 12) next
+    if (yr > 2025) next #only December 2022 to December 2025
+    
+    cat("Processing", yr, "-", sprintf("%02d", mo), "\n")
+    
+    dt_month <- load_filter_charging_dt_parallel(
+      chg_avail_files,
+      IDs     = NULL,
+      status  = NULL,          # load ALL statuses to count total EVSEs
+      year    = yr,
+      month   = mo,
+      n_cores = 4,
+      mem_efficient = TRUE,
+      prefilter = TRUE
+    )
+    
+    if (is.null(dt_month) || nrow(dt_month) == 0) next
+    
+    # Count distinct EVSEs by status and compute utilization per snapshot
+    # prop_occupied per snapshot (same approach as your summary_dt construction)
+    snap_util <- dt_month[EVSEStatus %in% c("Available", "Occupied"),
+                          .(prop_occupied = mean(EVSEStatus == "Occupied")),
+                          by = datetime]
+    
+    monthly_coverage_list[[paste(yr, mo, sep = "-")]] <- data.table(
+      year           = yr,
+      month          = mo,
+      month_date     = as.Date(paste(yr, mo, "01", sep = "-")),
+      n_snapshots     = uniqueN(snap_util$datetime),
+      n_evse_all      = uniqueN(dt_month$EvseID),
+      n_evse_total   = dt_month[EVSEStatus %in% c("Available", "Occupied"),
+                                uniqueN(EvseID)],
+      n_evse_occupied = dt_month[EVSEStatus == "Occupied",
+                                 uniqueN(EvseID)],
+      mean_util      = mean(snap_util$prop_occupied, na.rm = TRUE),
+      median_util    = median(snap_util$prop_occupied, na.rm = TRUE),
+      p25_util       = quantile(snap_util$prop_occupied, 0.25, na.rm = TRUE),
+      p75_util       = quantile(snap_util$prop_occupied, 0.75, na.rm = TRUE)
+    )
+    
+    rm(dt_month, snap_util)
+    gc()
+  }
+}
+
+monthly_coverage <- rbindlist(monthly_coverage_list)
+
+write.csv(monthly_coverage, "M:/Rudolph/0-Datasets/Switzerland/monthly_coverage.csv")
+```
+
+
+```{r}
+if(!exists("monthly_coverage")) monthly_coverage <- read.csv("M:/Rudolph/0-Datasets/Switzerland/monthly_coverage.csv")
+
+# ── Step 2: Monthly load and load share from hr_load_all ─────────────────────
+# hr_load_all already has: date, hour, max_EVload_kWh, hr_cons_MWh, max_chg_pct_kWh
+# Aggregate to monthly means
+
+monthly_load <- as.data.table(hr_load_all) %>%
+  mutate(date = as.Date(date)) %>%
+  mutate(month_date = floor_date(date, "month")) %>%
+  group_by(month_date) %>%
+  summarise(
+    mean_load_mw  = mean(max_EVload_kWh / 1000, na.rm = TRUE),
+    mean_pct      = mean(max_chg_pct_kWh * 100, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(month_date = as.Date(month_date))
+
+
+# ── Step 3: Join into one monthly summary dataframe ──────────────────────────
+monthly_coverage$month_date <- as.Date(monthly_coverage$month_date)
+
+monthly_fig <- monthly_coverage %>%
+  left_join(monthly_load, by = "month_date") 
+  filter(!is.na(mean_load_mw))   # drop months with no load data
+
+monthly_fig <- monthly_fig %>%
+  mutate(
+    days_in_month     = as.numeric(days_in_month(month_date)),
+    expected_snaps    = days_in_month * 24 * 12,          # 5-min intervals
+    pct_snaps         = (n_snapshots / expected_snaps) * 100,
+    pct_snaps_missing = 100 - pct_snaps)
+sum(monthly_fig$expected_snaps) #324,576
+sum(monthly_fig$n_snapshots) #301,342. 93%
+
+```
+
+
+```{r manuscript figure}
+# ── Flag months with >50% missing snapshots ───────────────────────────────────
+monthly_fig2 <- monthly_fig %>%
+  mutate(
+    poor_coverage = pct_snaps < 50,   # TRUE if more than 50% snapshots missing
+    # For lines: set EVSE values to NA for poor coverage months
+    n_evse_all_plot      = if_else(poor_coverage, NA_real_, as.numeric(n_evse_all)),
+    n_evse_total_plot    = if_else(poor_coverage, NA_real_, as.numeric(n_evse_total)),
+    n_evse_occupied_plot = if_else(poor_coverage, NA_real_, as.numeric(n_evse_occupied)),
+    # Missing bar height: 100% missing = 5000, scaled linearly
+    missing_bar_height   = (pct_snaps_missing / 100) * 5000,
+    # For gap months (n_snapshots == 0): set to NA to show as gap
+    # For poor coverage months (>50% missing but some data): retain values
+    mean_util_plot   = if_else(n_snapshots == 0L, NA_real_, mean_util),
+    median_util_plot = if_else(n_snapshots == 0L, NA_real_, median_util),
+    p25_util_plot    = if_else(n_snapshots == 0L, NA_real_, p25_util),
+    p75_util_plot    = if_else(n_snapshots == 0L, NA_real_, p75_util),
+    # Yellow highlight for poor coverage months — ribbon at full height
+    poor_cov_ymin    = if_else(poor_coverage & n_snapshots > 0L, 0,      NA_real_),
+    poor_cov_ymax    = if_else(poor_coverage & n_snapshots > 0L, Inf,    NA_real_))
+```
+
+
+```{r manuscript figure}
+# ── Panel 0: Missing snapshot % only (replaces secondary axis from pA) ────────
+p0 <- ggplot(monthly_fig2, aes(x = month_date)) +
+  geom_col(aes(y = pct_snaps_missing),
+           fill = "#CC3333", alpha = 0.7, width = 25) +
+  geom_hline(yintercept = 50, linetype = "dotted",
+             colour = "grey40", linewidth = 0.5) +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%b %Y",
+    limits      = as.Date(c("2022-12-01", "2025-12-31")),
+    expand      = expansion(mult = c(0, 0))) +
+  scale_y_continuous(
+    name   = "Missing\nSnapshots",
+    limits = c(0, 100),
+    breaks = seq(0, 100, by = 50),
+    expand = expansion(mult = c(0, 0)),
+    labels = function(x) paste0(x, "%")) +
+  labs(x = NULL, title = "Dataset Coverage, EV Charging Load Share, and Utilization Rate") +
+  theme_bw(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank())
+
+
+# ── Panel A: Total active EVSEs and max occupied only ─────────────────────────
+pA <- ggplot(monthly_fig2, aes(x = month_date)) +
+  # Yellow background for poor coverage months
+  geom_rect(
+    data = monthly_fig2 %>% filter(poor_coverage & n_snapshots > 0L),
+    aes(xmin = month_date - 15, xmax = month_date + 15,
+        ymin = -Inf, ymax = Inf),
+    fill = "#E69F00", alpha = 0.2, inherit.aes = FALSE) +
+  # Total active EVSEs as area + line in grey
+  geom_area(aes(y = n_evse_total_plot),
+            fill = "grey70", alpha = 0.5) +
+  geom_line(aes(y = n_evse_total_plot, colour = "Total active EVSEs"),
+            linewidth = 0.8) +
+  geom_point(aes(y = n_evse_total_plot, colour = "Total active EVSEs"),
+             size = 1.8) +
+  # Max occupied EVSEs
+  geom_line(aes(y = n_evse_occupied_plot, colour = "Max occupied EVSEs"),
+            linewidth = 0.6, linetype = "dashed") +
+  geom_point(aes(y = n_evse_occupied_plot, colour = "Max occupied EVSEs"),
+             size = 1.8) +
+  scale_colour_manual(
+    values = c("Max occupied EVSEs" = "#D55E00",
+               "Total active EVSEs" = "grey40")) +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%b %Y",
+    limits      = as.Date(c("2022-12-01", "2025-12-31")),
+    expand      = expansion(mult = c(0, 0))) +
+  scale_y_continuous(
+    labels = comma,
+    name   = "Number of EVSEs",
+    breaks = seq(0, 20000, by = 5000),
+    limits = c(0, 20000),
+    expand = expansion(mult = c(0, 0.02))) +
+  labs(x = NULL, colour = NULL, title = NULL) +
+  theme_bw(base_size = 11) +
+  theme(
+    legend.position        = c(0.98, 0.02),   # bottom right inside plot
+    legend.justification   = c("right", "bottom"),
+    legend.background      = element_rect(fill = alpha("white", 0.8),
+                                          colour = "grey80", linewidth = 0.3),
+    legend.margin          = margin(3, 6, 3, 6),
+    legend.key.size        = unit(0.5, "cm"),
+    legend.text            = element_text(size = 9))
+
+
+# ── Panel B: Utilization rate with yellow highlights ─────────────────────────
+pB <- ggplot(monthly_fig2, aes(x = month_date)) +
+  # Yellow background for poor coverage months
+  geom_rect(
+    data = monthly_fig2 %>% filter(poor_coverage & n_snapshots > 0L),
+    aes(xmin = month_date - 15, xmax = month_date + 15,
+        ymin = -Inf, ymax = Inf),
+    fill = "#E69F00", alpha = 0.2, inherit.aes = FALSE
+  ) +
+  geom_ribbon(aes(ymin = p25_util_plot, ymax = p75_util_plot),
+              fill = "#009E73", alpha = 0.2) +
+  geom_line(aes(y = mean_util_plot, colour = "Mean"),
+            linewidth = 0.9) +
+  geom_line(aes(y = median_util_plot, colour = "Median"),
+            linewidth = 0.6, linetype = "dashed") +
+  scale_colour_manual(values = c("Mean"   = "#009E73",
+                                 "Median" = "#005a3c")) +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%b %Y",
+    limits      = as.Date(c("2022-12-01", "2025-12-31")),
+    expand      = expansion(mult = c(0, 0))) +
+  scale_y_continuous(
+    labels = percent_format(accuracy = 1),
+    expand = expansion(mult = c(0, 0.02)),
+    limits = c(0,0.2)) +
+  labs(
+    x      = NULL,
+    y      = "EVSE Utilization Rate",
+    colour = NULL,
+    title  = NULL) +
+  theme_bw(base_size = 11) +
+  theme(
+    legend.position        = c(0.98, 0.02),   # bottom right inside plot
+    legend.justification   = c("right", "bottom"),
+    legend.background      = element_rect(fill = alpha("white", 0.8),
+                                          colour = "grey80", linewidth = 0.3),
+    legend.margin          = margin(3, 6, 3, 6),
+    legend.key.size        = unit(0.5, "cm"),
+    legend.text            = element_text(size = 9))
+
+
+
+
+# ── Combine ───────────────────────────────────────────────────────────────────
+p0 / pA / pB +
+  plot_layout(heights = c(2, 4, 4)) 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
