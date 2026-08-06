@@ -293,7 +293,7 @@ count <- count_5min_snapshots(raw_data_root, "2024-10")
 
 #total dataset counts
 first_month <- "2022-12"
-last_month <- "2025-10"
+last_month <- "2025-12"
 
 ovr_seq_start <- as.POSIXct(paste0(first_month, "-01 00:00"), format="%Y-%m-%d %H:%M", tz = "Europe/Zurich") - minutes(5) + minutes(5)
 ovr_seq_end   <- as.POSIXct(paste0(last_month, "-01 00:00"), format="%Y-%m-%d %H:%M", tz = "Europe/Zurich") + months(1) - minutes(5)

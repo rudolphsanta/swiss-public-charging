@@ -4,3 +4,6 @@
 .Ruserdata
 .RDataTmp*
 *.Rproj.user
+.ipynb_checkpoints/
+.jupyter/
+data/

@@ -15,12 +15,52 @@ library(arrow)
 library(data.table)  # optional for rbindlist if you prefer
 library(lubridate)
 library(parallel)
+library(scales)
 
 # charging status file location and list
 charging_data_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-Data_Parquet")
 
 chg_avail_files <- list.files(charging_data_root,pattern = "\\.parquet$",full.names = TRUE)
 
+# filter for specific months
+min_month <- "2022-12"
+max_month <- "2025-12"
+
+keep <- data.frame(
+  path  = chg_avail_files,
+  month = sub("^(\\d{4}-\\d{2}).*$", "\\1", basename(chg_avail_files)),
+  stringsAsFactors = FALSE
+)
+
+keep <- keep[keep$month >= min_month & keep$month <= max_month, ]
+keep <- keep[order(keep$month), ]
+
+chg_avail_files <- keep$path
+
+```
+
+```{r check lat-lon precision - DELETE}
+CH_EVSE_details %>%
+  mutate(lat_dp = nchar(sub("^[^.]*\\.", "", as.character(latitude))),
+         lon_dp = nchar(sub("^[^.]*\\.", "", as.character(longitude)))) %>%
+  summarise(across(c(lat_dp, lon_dp),
+                   list(min = ~min(.x, na.rm = TRUE),
+                        med = ~median(.x, na.rm = TRUE),
+                        max = ~max(.x, na.rm = TRUE))))
+
+CH_EVSE_details %>%
+  mutate(lat_dp = nchar(sub("^[^.]*\\.", "", as.character(latitude)))) %>%
+  count(lat_dp) %>%
+  arrange(lat_dp) %>%
+  print(n = Inf)
+
+CH_EVSE_details %>%
+  summarise(
+    lat_min = min(latitude,  na.rm = TRUE),
+    lat_max = max(latitude,  na.rm = TRUE),
+    lon_min = min(longitude, na.rm = TRUE),
+    lon_max = max(longitude, na.rm = TRUE)
+  )
 ```
 
 
@@ -632,10 +672,10 @@ filter_IDs <- unique(CH_EVSE_details$EvseID)
 
 #2022 summary
 Rows_2022 <- load_filter_charging_dt_parallel(chg_avail_files,
-                                              IDs = filter_IDs,
+                                              # IDs = filter_IDs,
                                               status = NULL,
                                               year = 2022,
-                                              n_cores = 4,
+                                              n_cores = 8,
                                               mem_efficient = TRUE,
                                               prefilter = FALSE) %>%
   count(EVSEStatus) %>%
@@ -649,10 +689,10 @@ Rows_2022 <- load_filter_charging_dt_parallel(chg_avail_files,
 
 #2023 summary
 Rows_2023 <- load_filter_charging_dt_parallel(chg_avail_files,
-                                              IDs = filter_IDs,
+                                              # IDs = filter_IDs,
                                               status = NULL,
                                               year = 2023,
-                                              n_cores = 4,
+                                              n_cores = 8,
                                               mem_efficient = TRUE,
                                               prefilter = FALSE) %>%
   count(EVSEStatus) %>%
@@ -666,10 +706,10 @@ Rows_2023 <- load_filter_charging_dt_parallel(chg_avail_files,
 
 #2024 summary
 Rows_2024 <- load_filter_charging_dt_parallel(chg_avail_files,
-                                              IDs = filter_IDs,
+                                              # IDs = filter_IDs,
                                               status = NULL,
                                               year = 2024,
-                                              n_cores = 4,
+                                              n_cores = 8,
                                               mem_efficient = TRUE,
                                               prefilter = FALSE) %>%
   count(EVSEStatus) %>%
@@ -683,10 +723,10 @@ Rows_2024 <- load_filter_charging_dt_parallel(chg_avail_files,
 
 #2025 summary
 Rows_2025 <- load_filter_charging_dt_parallel(chg_avail_files,
-                                              IDs = filter_IDs,
+                                              # IDs = filter_IDs,
                                               status = NULL,
                                               year = 2025,
-                                              n_cores = 4,
+                                              n_cores = 8,
                                               mem_efficient = TRUE,
                                               prefilter = FALSE) %>%
   count(EVSEStatus) %>%
@@ -706,37 +746,6 @@ Removed <- sum(All_year_summary$Total_Rows) - (sum(All_year_summary$Available) +
 Removed/Total
 ```
 
-
-
-```{r generate a single typical day set of data for a selected power level of charger - DELETE}
-system.time({
-  # summary(mid_power_EVSE)
-
-  low_power_EVSE <- CH_EVSE_details[!is.na(CH_EVSE_details$ChargingFacility_power) &
-                                    CH_EVSE_details$ChargingFacility_power < 22, ]
-
-  mid_power_EVSE <- CH_EVSE_details[!is.na(CH_EVSE_details$ChargingFacility_power) &
-                                    CH_EVSE_details$ChargingFacility_power >= 22 &
-                                    CH_EVSE_details$ChargingFacility_power < 50, ]
-  
-  high_power_EVSE <- CH_EVSE_details[!is.na(CH_EVSE_details$ChargingFacility_power) &
-                                    CH_EVSE_details$ChargingFacility_power > 50, ]
-  # rm(chg_dt_full)
-  filter_IDs <- unique(high_power_EVSE$EvseID)
-  # undebug(load_filter_charging_dt_parallel)
-  chg_dt_full <- load_filter_charging_dt_parallel(chg_avail_files,
-                                                 IDs = filter_IDs,
-                                                 year = NULL, 
-                                                 month = c(5,6,7), #summer 
-                                                 day = NULL, 
-                                                 wday = c(1,2,3,4,5), #weekday 
-                                                 hour = NULL, 
-                                                 minute = NULL, 
-                                                 existing_dt = NULL,
-                                                 n_cores = 8)
-})
-print(format(object.size(chg_dt_full),units = "GB"))
-```
 
 ## Exploratory analysis of the charging dataset
 ```{r function to check how many times each status appears for each EvseID}
@@ -768,26 +777,6 @@ summarize_evse_status <- function(dt_statuses, id_col = "EvseID", status_col = "
   
   return(as.data.table(summary_dt))
 }
-```
-
-```{r }
-if(exists("chg_dt_full")) rm(chg_dt_full) #clear the dt if it's there
-system.time({
-  chg_dt_full <- load_filter_charging_dt_parallel(chg_avail_files,
-                                                # status = NULL,
-                                                # year = 2025,
-                                                month = c(5,6,7),
-                                                wday = c(1,2,3,4,5),
-                                                hour = 12,
-                                                mem_efficient = TRUE)
-})
-
-# undebug(summarize_evse_status)
-chg_dt_summary <- summarize_evse_status(chg_dt_full)
-
-summary_dt <- chg_dt_full[ , .(prop_occupied = mean(EVSEStatus == "Occupied")), by = datetime]
-summary_dt <- summary_dt[, hour := as.integer(format(datetime, "%H"))]
-
 ```
 
 
@@ -1012,7 +1001,7 @@ bootstrapped_hourly_summary <- function(dt, n_boot = 1000, seed = 123, sample.re
   result <- dt[, {
     # Bootstrap: sample prop_occupied with replacement n_boot times
     boot_stats <- replicate(n_boot, unlist(compute_stats(sample(prop_occupied, replace = TRUE))))
-    boot_stats <- unlist(compute_stats(sample(prop_occupied, size = n_boot, replace = TRUE)))
+    # boot_stats <- unlist(compute_stats(sample(prop_occupied, size = n_boot, replace = TRUE)))
     
     # Average statistics across bootstrap samples
     stats_mean <- rowMeans(boot_stats)
@@ -1148,45 +1137,6 @@ h_bootstrapped_hourly_samples <- function(dt, hr, n_boot = NULL, seed = 123) {
   
   return(boot_sample)
 }
-
-```
-
-```{r Sample distributions of one hour - DETELE Unnecessary}
-crosssection <- summary_dt[hour == 12, prop_occupied]
-mean_hourly <- daily_mean_sample(summary_dt, hr = 12)
-max_hourly <- daily_max_sample(summary_dt, hr = 12)
-bootstrapped <- bootstrapped_hourly_samples(summary_dt, hr = 12)
-hbootstrapped <- h_bootstrapped_hourly_samples(summary_dt, hr = 12)
-
-#cross sectional
-length(crosssection)
-hist(crosssection, xlim = c(0, 0.2), breaks = "FD")
-#hourly means
-length(mean_hourly)
-hist(mean_hourly, xlim = c(0, 0.2), breaks = "FD")
-#hourly maxes
-length(max_hourly)
-hist(max_hourly, xlim = c(0, 0.2), breaks = "FD")
-#bootstrapped
-length(bootstrapped)
-hist(bootstrapped, xlim = c(0, 0.2), breaks = "FD")
-#hBootstrapped
-length(hbootstrapped)
-hist(hbootstrapped, xlim = c(0, 0.2), breaks = "FD")
-
-#QQ plots of the cross sectional and sampled values
-qqnorm(crosssection, pch = 19, frame = FALSE, main = "Cross-sectional Normal Q-Q Plot")
-qqline(crosssection, col = 'lightblue', lwd = 2)
-
-qqnorm(mean_hourly, pch = 19, frame = FALSE, main = "Hourly Mean Normal Q-Q Plot")
-qqline(mean_hourly, col = 'lightblue', lwd = 2)
-
-qqnorm(bootstrapped, pch = 19, frame = FALSE, main = "Bootstrapped Normal Q-Q Plot")
-qqline(bootstrapped, col = 'lightblue', lwd = 2)
-
-qqnorm(hbootstrapped, pch = 19, frame = FALSE, main = "H Bootstrapped Normal Q-Q Plot")
-qqline(hbootstrapped, col = 'lightblue', lwd = 2)
-
 
 ```
 
@@ -1375,7 +1325,7 @@ for (h in hours) {
     hour = h, # filter by this hour
     minute = NULL,
     existing_dt = NULL,
-    n_cores = 4,
+    n_cores = 8,
     mem_efficient = TRUE)
   
   # If no rows returned, create NA row
@@ -1421,6 +1371,73 @@ write.csv(hourly_summary_boot,"C:/Users/santar_r/Documents/Rudolph_local/Dataset
 write.csv(hourly_summary_agg,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/cross_section_summary_means.csv")
 write.csv(hourly_summary_agg_max,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/cross_section_summary_maxes.csv")
 write.csv(hourly_summary_hboot,"C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/cross_section_summary_hbootstrapped.csv")
+```
+
+```{r}
+# ── Build IQR comparison table from existing hourly summary dataframes ─────────
+
+# Each dataframe has columns: hour, q1_prop, q3_prop (among others)
+# IQR = q3_prop - q1_prop for each hour
+# We report: mean IQR across all 24 hours, and per-hour IQR
+
+compute_iqr_summary <- function(df, method_name) {
+  df %>%
+    mutate(
+      method = method_name,
+      iqr    = q3_prop - q1_prop
+    ) %>%
+    select(method, hour, q1_prop, q3_prop, iqr)
+}
+
+# ── Per-hour IQR table (24 rows x 5 methods = 120 rows) ──────────────────────
+iqr_per_hour <- rbindlist(list(
+  compute_iqr_summary(hourly_summary,         "Cross-sectional"),
+  compute_iqr_summary(hourly_summary_agg,     "Mean-aggregated"),
+  compute_iqr_summary(hourly_summary_agg_max, "Max-aggregated"),
+  compute_iqr_summary(hourly_summary_boot,    "Bootstrapped"),
+  compute_iqr_summary(hourly_summary_hboot,   "Hierarchical bootstrap")
+), use.names = TRUE, fill = TRUE)
+
+# ── Summary table: mean IQR per method across all hours ──────────────────────
+iqr_summary_table <- iqr_per_hour %>%
+  group_by(method) %>%
+  summarise(
+    mean_q1_pct  = round(mean(q1_prop,  na.rm = TRUE) * 100, 2),
+    mean_q3_pct  = round(mean(q3_prop,  na.rm = TRUE) * 100, 2),
+    mean_iqr_pct = round(mean(iqr,      na.rm = TRUE) * 100, 2),
+    min_iqr_pct  = round(min(iqr,       na.rm = TRUE) * 100, 2),
+    max_iqr_pct  = round(max(iqr,       na.rm = TRUE) * 100, 2),
+    .groups = "drop"
+  ) %>%
+  rename(
+    Method                        = method,
+    `Mean Q1 (%)`                 = mean_q1_pct,
+    `Mean Q3 (%)`                 = mean_q3_pct,
+    `Mean IQR (%)` = mean_iqr_pct,
+    `Min IQR (%)`  = min_iqr_pct,
+    `Max IQR (%)`  = max_iqr_pct
+  )
+
+print(iqr_summary_table)
+
+# ── Wide per-hour table: one row per hour, one column per method ──────────────
+iqr_wide <- iqr_per_hour %>%
+  select(hour, method, iqr) %>%
+  mutate(iqr = round(iqr * 100, 2)) %>%
+  pivot_wider(names_from = method, values_from = iqr) %>%
+  arrange(hour) %>%
+  rename(Hour = hour)
+
+print(iqr_wide)
+
+# ── Export both to CSV for the data repository ────────────────────────────────
+write.csv(iqr_summary_table,
+          file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/utilization_sampling_method_summary.csv"),
+          row.names = FALSE)
+
+write.csv(iqr_wide,
+          file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swiss-EVChg-UtilizationRate_Summary/utilization_sampling_method_by_hour.csv"),
+          row.names = FALSE)
 ```
 
 
@@ -1628,7 +1645,7 @@ ggplot(hourly_summary_WKday) +
         legend.position = "bottom",
         plot.margin = margin(10,20,10,20))
 
-ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/weekday_utilization_crosssection3.png", width = 8,height = 6,dpi = 300)
+# ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/weekday_utilization_crosssection3.png", width = 8,height = 6,dpi = 300)
 
 cat("All hourly summaries completed.\n")
 
@@ -1735,6 +1752,8 @@ ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Data
 
 cat("All hourly summaries completed.\n")
 ```
+
+
 
 #Utilization Rate Validation against Gellrich et al. (2022)
 ```{r}
@@ -1857,6 +1876,36 @@ ggplot() +
 ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/Sep_Oct_Dec-Utilization.png", width = 8,height = 8,dpi = 300)
 
 # plot_sample
+```
+
+#Plot of Specific Days
+```{r}
+chg_dt_january <- load_filter_charging_dt_parallel(chg_avail_files,
+                                                   IDs = NULL,
+                                                   year = NULL,
+                                                   month = 1,
+                                                   day = NULL,
+                                                   wday = NULL,
+                                                   hour = NULL, # filter by this hour
+                                                   minute = NULL,
+                                                   existing_dt = NULL,
+                                                   n_cores = 4,
+                                                   mem_efficient = TRUE,
+                                                   prefilter = TRUE)
+
+chg_dt_july <- load_filter_charging_dt_parallel(chg_avail_files,
+                                                   IDs = NULL,
+                                                   year = NULL,
+                                                   month = 7,
+                                                   day = NULL,
+                                                   wday = NULL,
+                                                   hour = NULL, # filter by this hour
+                                                   minute = NULL,
+                                                   existing_dt = NULL,
+                                                   n_cores = 4,
+                                                   mem_efficient = TRUE,
+                                                   prefilter = TRUE)
+
 ```
 
 
@@ -2519,8 +2568,8 @@ ggplot(data = daily, aes(x = date)) +
   geom_line(aes(y = ev_load_mwh * scale_factor, colour = "EV Charging Load"),
             linewidth = 0.5, alpha = 0.9) +
   scale_y_continuous(
-    name    = "Total Swiss System Load (MW)",
-    labels  = comma,
+    name    = "Total Swiss System Load (GW)",
+    labels  = label_number(scale = 1e-3),
     breaks  = primary_breaks,
     limits  = c(0, max(primary_breaks)),
     expand   = expansion(mult = c(0, 0.02)),  # no padding at bottom, small at top
@@ -2545,6 +2594,7 @@ ggplot(data = daily, aes(x = date)) +
   theme(
     legend.position    = "bottom",
     axis.title.y.right = element_text(colour = "#D55E00"),
+    axis.text.y.right = element_text(colour = "#D55E00"),
     panel.grid.minor   = element_blank())
 
 ```
@@ -2772,6 +2822,13 @@ for (yr in years) {
 monthly_coverage <- rbindlist(monthly_coverage_list)
 
 write.csv(monthly_coverage, "M:/Rudolph/0-Datasets/Switzerland/monthly_coverage.csv")
+```
+
+```{r}
+
+min(monthly_coverage$n_evse_total/monthly_coverage$n_evse_all, na.rm = TRUE)
+max(monthly_coverage$n_evse_total/monthly_coverage$n_evse_all, na.rm = TRUE)
+
 ```
 
 
