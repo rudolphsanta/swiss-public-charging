@@ -28,6 +28,13 @@ output_root <- file.path("C:/Users/santar_r/Documents/Rudolph_local/Datasets/Swi
 
 ```
 
+```{r}
+october <- read.csv("C:/Users/santar_r/Desktop/2024-10_charging.csv") %>%
+  mutate(datetime = as.Date(datetime))
+
+summary(october)
+```
+
 ```{r functions for processing}
 safe_fromJSON <- function(path) {
   tryCatch({
