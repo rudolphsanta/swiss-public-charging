@@ -124,6 +124,10 @@ dim(CH_EVSE_details) #17893 rows. 262 more rows eliminated
 
 ```
 
+```{r}
+summary(CH_EVSE_details)
+length(unique(CH_EVSE_details$EvseID))
+```
 
 
 ```{r correlation heatmap}
@@ -726,7 +730,7 @@ Rows_2025 <- load_filter_charging_dt_parallel(chg_avail_files,
                                               # IDs = filter_IDs,
                                               status = NULL,
                                               year = 2025,
-                                              n_cores = 8,
+                                              n_cores = 4,
                                               mem_efficient = TRUE,
                                               prefilter = FALSE) %>%
   count(EVSEStatus) %>%
@@ -737,9 +741,22 @@ Rows_2025 <- load_filter_charging_dt_parallel(chg_avail_files,
   mutate(Total_Rows = rowSums(across(everything())),
          year = 2025) %>%
   select(year, Total_Rows, everything())
+  
+library(arrow)
+
+files_2025 <- chg_avail_files[grepl("^2025-", basename(chg_avail_files))]
+
+Rows_2025_2 <- open_dataset(files_2025) %>%
+  dplyr::group_by(EVSEStatus) %>%
+  dplyr::summarise(n = n()) %>%
+  dplyr::collect() %>%
+  pivot_wider(names_from = EVSEStatus, values_from = n, values_fill = 0) %>%
+  dplyr::mutate(Total_Rows = rowSums(across(everything())),
+         year = 2025) %>%
+  dplyr::select(year, Total_Rows, everything())
 
 
-All_year_summary <- rbind(Rows_2022,Rows_2023,Rows_2024,Rows_2025)
+All_year_summary <- rbind(Rows_2022,Rows_2023,Rows_2024,Rows_2025_2)
 Total <- sum(All_year_summary$Total_Rows)
 Removed <- sum(All_year_summary$Total_Rows) - (sum(All_year_summary$Available) + sum(All_year_summary$Occupied))
 
