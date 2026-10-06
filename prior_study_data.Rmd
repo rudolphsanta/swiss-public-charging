@@ -15,9 +15,66 @@ library(ggplot2)
 ```{r}
 Gellrich_data <- read.csv("M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/gellrich_extracted_data.csv")
 
-Gellrich_data
 ggplot(Gellrich_data, aes(x = X, y = Y, color = Day, group = Day)) +
   geom_line()
+```
+
+```{r}
+Gellrich_data2 <- read.csv("M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Paper_Charging_Infrastructure_PSI/figure_02_data.csv")
+
+# two-letter day code -> full name (explicit lookup, locale-independent)
+wd_map <- c(MO = "Monday",   TU = "Tuesday", WE = "Wednesday", TH = "Thursday",
+            FR = "Friday",   SA = "Saturday", SU = "Sunday")
+
+Gellrich_data2_formatted <- Gellrich_data2 %>%
+  rename(weekday = Weekday,
+         utilization = Occupied_Pct) %>%
+  mutate(
+    # --- weekday -------------------------------------------------------
+    weekday = unname(wd_map[weekday]),
+    weekday = factor(weekday,
+                     levels = c("Monday", "Tuesday", "Wednesday", "Thursday",
+                                "Friday", "Saturday", "Sunday")),
+
+    # --- weekday_type --------------------------------------------------
+    weekday_type = if_else(weekday %in% c("Saturday", "Sunday"),
+                           "Weekend", "Weekday"),
+    weekday_type = factor(weekday_type, levels = c("Weekday", "Weekend")),
+
+    # --- split DayHour ("2021-09-01-00") -------------------------------
+    date  = as.POSIXct(substr(DayHour, 1, 10), format = "%Y-%m-%d", tz = "UTC"),
+    hour  = as.integer(substr(DayHour, 12, 13)),
+    month = factor(month.name[as.integer(substr(DayHour, 6, 7))],
+                   levels = c("September", "October", "December")),
+
+    # --- week 1-5 ------------------------------------------------------
+    week = case_when(
+      between(date, as.POSIXct("2021-09-01", tz = "UTC"),
+                    as.POSIXct("2021-09-07", tz = "UTC")) ~ 1L,
+      between(date, as.POSIXct("2021-09-08", tz = "UTC"),
+                    as.POSIXct("2021-09-14", tz = "UTC")) ~ 2L,
+      between(date, as.POSIXct("2021-10-18", tz = "UTC"),
+                    as.POSIXct("2021-10-24", tz = "UTC")) ~ 3L,
+      between(date, as.POSIXct("2021-12-09", tz = "UTC"),
+                    as.POSIXct("2021-12-15", tz = "UTC")) ~ 4L,
+      between(date, as.POSIXct("2021-12-16", tz = "UTC"),
+                    as.POSIXct("2021-12-22", tz = "UTC")) ~ 5L,
+      TRUE ~ NA_integer_
+    )
+  )
+# ##Checks
+# # 1. every row should land in a week; expect 0
+# sum(is.na(Gellrich_data2_formatted$week))
+# 
+# # 2. supplied weekday vs. weekday derived from the parsed date; expect TRUE
+# all(as.integer(Gellrich_data2_formatted$weekday) ==
+#     as.integer(format(Gellrich_data2_formatted$date, "%u")))
+# 
+# # 3. row count per week (expect 168 = 7 days x 24 h, one week short by 1)
+# table(Gellrich_data2_formatted$week, useNA = "ifany")
+# 
+# # 4. coverage
+# table(Gellrich_data2_formatted$month, Gellrich_data2$weekday_type)
 ```
 
 
@@ -81,6 +138,42 @@ ggplot() +
   
 
 ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/Sep_Oct_Dec-Validation.png", width = 8,height = 8,dpi = 300)
+
+```
+
+```{r, fig.width=12, fig.height=6}
+#Manuscript Figure
+ggplot() +
+  geom_line(data = Gellrich_data2_formatted, 
+            aes(x = hour, y = utilization/100,
+                group = date,
+                color = weekday_type), alpha = 0.5, linewidth = 0.4) +
+  facet_wrap(~ month, ncol = 1, scales = "free_x") +
+  # geom_ribbon(data = september_wk, 
+  #             aes(x = hour_rounded, ymax = max_util, ymin = min_util), fill = "lightblue", alpha = 0.7) +
+  # geom_ribbon(data = september_we, 
+  #             aes(x = hour_rounded, ymax = max_util, ymin = min_util), fill = "orange", alpha = 0.7) +
+  scale_x_continuous(
+    limits = c(0,24),
+    breaks = seq(0, 24, by = 4),
+    labels = function(x) sprintf("%02d:00", x),
+    expand = c(0,0)) +
+  scale_y_continuous(labels = scales::percent_format(), expand = c(0,0)) +
+  scale_color_manual(values = c("Weekday" = "#1B9E77", 
+                                "Weekend" = "#D95F02")) +
+  labs(title = "Hourly Utilization Rates – Weekdays vs Weekends - Validation",
+       subtitle = "All days in September, October, and December",
+       x = "Hour of Day",
+       y = "Utilization (%)",
+       color = "Day Type") +
+  coord_cartesian(ylim = c(0, 0.25), xlim = c(0,24)) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 12),
+        plot.title = element_text(face = "bold"))
+  
+
+ggsave(filename = "M:/Rudolph/Manuscripts and Publications/Paper - Charging Dataset/Figures/Sep_Oct_Dec-Validation2.png", width = 8,height = 8,dpi = 300)
 
 ```
 
